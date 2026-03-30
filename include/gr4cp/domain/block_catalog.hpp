@@ -11,9 +11,25 @@ namespace gr4cp::domain {
 
 using BlockParameterDefault = std::variant<std::nullptr_t, bool, int, double, std::string>;
 
+enum class BlockPortCardinalityKind {
+    Fixed = 0,
+    Dynamic,
+};
+
 struct BlockPortDescriptor {
     std::string name;
     std::string type;
+    BlockPortCardinalityKind cardinality_kind{BlockPortCardinalityKind::Fixed};
+    std::optional<int> current_port_count;
+    std::optional<int> render_port_count;
+    std::optional<int> min_port_count;
+    std::optional<int> max_port_count;
+    std::optional<std::string> size_parameter;
+    std::optional<std::string> handle_name_template;
+
+    BlockPortDescriptor() = default;
+
+    BlockPortDescriptor(std::string name_, std::string type_) : name(std::move(name_)), type(std::move(type_)) {}
 };
 
 struct BlockParameterDescriptor {

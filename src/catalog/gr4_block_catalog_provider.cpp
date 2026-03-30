@@ -508,25 +508,279 @@ std::string parameter_summary(const gr::property_map& meta, std::string_view nam
     return "";
 }
 
-domain::BlockPortDescriptor to_port_descriptor(const gr::BlockModel::DynamicPortOrCollection& port_or_collection) {
+std::string_view cardinality_kind_to_string(domain::BlockPortCardinalityKind kind) {
+    switch (kind) {
+    case domain::BlockPortCardinalityKind::Fixed: return "fixed";
+    case domain::BlockPortCardinalityKind::Dynamic: return "dynamic";
+    }
+    return "fixed";
+}
+
+std::optional<domain::BlockPortCardinalityKind> cardinality_kind_from_string(std::string_view value) {
+    if (value == "fixed") {
+        return domain::BlockPortCardinalityKind::Fixed;
+    }
+    if (value == "dynamic") {
+        return domain::BlockPortCardinalityKind::Dynamic;
+    }
+    return std::nullopt;
+}
+
+std::optional<int> port_count_lower_bound(std::string_view parameter_name) {
+    if (parameter_name == "n_inputs" || parameter_name == "n_outputs" || parameter_name == "n_ports") {
+        return 1;
+    }
+    return std::nullopt;
+}
+
+std::optional<int> port_count_upper_bound(std::string_view parameter_name) {
+    if (parameter_name == "n_inputs" || parameter_name == "n_outputs" || parameter_name == "n_ports") {
+        return 32;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> infer_collection_size_parameter(std::string_view collection_name,
+                                                           bool is_input,
+                                                           const std::vector<domain::BlockParameterDescriptor>& parameters) {
+    std::vector<std::string> candidates;
+    const auto add_candidate = [&](std::string value) {
+        candidates.push_back(std::move(value));
+    };
+
+    auto add_patterns = [&](std::string_view alias) {
+        add_candidate("n_" + std::string(alias));
+        add_candidate("num_" + std::string(alias));
+        add_candidate(std::string(alias));
+        add_candidate(std::string(alias) + "_count");
+        add_candidate("count_" + std::string(alias));
+    };
+
+    const std::string base(collection_name);
+    const auto singular = [&base]() {
+        if (base.size() > 3 && base.ends_with("ies")) {
+            return base.substr(0, base.size() - 3) + "y";
+        }
+        if (base.size() > 1 && base.ends_with('s')) {
+            return base.substr(0, base.size() - 1);
+        }
+        return base;
+    }();
+    const auto plural = [&base]() {
+        if (base.ends_with('s')) {
+            return base;
+        }
+        if (base.ends_with('y') && base.size() > 1) {
+            return base.substr(0, base.size() - 1) + "ies";
+        }
+        return base + "s";
+    }();
+
+    add_patterns(base);
+    if (singular != base) {
+        add_patterns(singular);
+    }
+    if (plural != base && plural != singular) {
+        add_patterns(plural);
+    }
+    add_patterns(is_input ? "in" : "out");
+    add_patterns(is_input ? "input" : "output");
+    add_patterns(is_input ? "inputs" : "outputs");
+
+    std::vector<std::string> unique_candidates;
+    std::set<std::string> seen;
+    unique_candidates.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+        if (seen.insert(candidate).second) {
+            unique_candidates.push_back(candidate);
+        }
+    }
+
+    const auto matches = [&](const std::string& candidate) {
+        return std::find_if(parameters.begin(), parameters.end(), [&](const auto& parameter) {
+                   return parameter.name == candidate;
+               }) != parameters.end();
+    };
+
+    for (const auto& candidate : unique_candidates) {
+        if (matches(candidate)) {
+            return candidate;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<int> parameter_default_int(const domain::BlockParameterDescriptor& parameter) {
+    if (const auto* default_value = std::get_if<int>(&parameter.default_value)) {
+        return *default_value;
+    }
+    return std::nullopt;
+}
+
+std::string trim_copy(std::string_view value) {
+    const auto first = value.find_first_not_of(" \t\n\r");
+    if (first == std::string_view::npos) {
+        return "";
+    }
+    const auto last = value.find_last_not_of(" \t\n\r");
+    return std::string(value.substr(first, last - first + 1));
+}
+
+std::optional<std::string> infer_collection_element_type(std::string_view block_id) {
+    const auto open = block_id.find('<');
+    const auto close = block_id.rfind('>');
+    if (open == std::string_view::npos || close == std::string_view::npos || close <= open + 1) {
+        return std::nullopt;
+    }
+
+    std::string_view args = block_id.substr(open + 1, close - open - 1);
+    std::size_t depth = 0;
+    for (std::size_t index = 0; index < args.size(); ++index) {
+        const char ch = args[index];
+        if (ch == '<') {
+            ++depth;
+        } else if (ch == '>') {
+            if (depth > 0) {
+                --depth;
+            }
+        } else if (ch == ',' && depth == 0) {
+            args = args.substr(0, index);
+            break;
+        }
+    }
+
+    const auto type = trim_copy(args);
+    if (type.empty()) {
+        return std::nullopt;
+    }
+    return type;
+}
+
+std::optional<int> infer_collection_render_port_count(std::string_view collection_name,
+                                                      bool is_input,
+                                                      const std::vector<domain::BlockParameterDescriptor>& parameters,
+                                                      std::size_t current_count,
+                                                      std::optional<int> min_port_count,
+                                                      std::optional<int> max_port_count) {
+    const auto size_parameter = infer_collection_size_parameter(collection_name, is_input, parameters);
+    if (size_parameter.has_value()) {
+        const auto parameter_it = std::find_if(parameters.begin(), parameters.end(), [&](const auto& parameter) {
+            return parameter.name == *size_parameter;
+        });
+        if (parameter_it != parameters.end()) {
+            if (const auto default_count = parameter_default_int(*parameter_it); default_count.has_value()) {
+                auto count = *default_count;
+                if (min_port_count.has_value() && count < *min_port_count) {
+                    count = *min_port_count;
+                }
+                if (max_port_count.has_value() && *max_port_count >= 0 && count > *max_port_count) {
+                    count = *max_port_count;
+                }
+                return count;
+            }
+        }
+    }
+
+    if (current_count > 0) {
+        return static_cast<int>(current_count);
+    }
+    if (min_port_count.has_value() && *min_port_count > 0) {
+        return *min_port_count;
+    }
+    return std::nullopt;
+}
+
+struct CollectionMetadata {
+    domain::BlockPortCardinalityKind cardinality_kind{domain::BlockPortCardinalityKind::Fixed};
+    std::optional<int> current_port_count;
+    std::optional<int> render_port_count;
+    std::optional<int> min_port_count;
+    std::optional<int> max_port_count;
+    std::optional<std::string> size_parameter;
+    std::optional<std::string> handle_name_template;
+    std::optional<std::string> element_type;
+};
+
+CollectionMetadata infer_collection_metadata(std::string_view collection_name,
+                                             std::string_view block_id,
+                                             bool is_input,
+                                             const std::vector<domain::BlockParameterDescriptor>& parameters,
+                                             std::size_t current_count) {
+    CollectionMetadata metadata;
+    metadata.cardinality_kind = domain::BlockPortCardinalityKind::Dynamic;
+    metadata.current_port_count = static_cast<int>(current_count);
+    metadata.min_port_count = current_count == 0 ? 0 : 1;
+    metadata.max_port_count = -1;
+    metadata.size_parameter = infer_collection_size_parameter(collection_name, is_input, parameters);
+    metadata.handle_name_template = std::string(collection_name) + "#${index}";
+    metadata.element_type = infer_collection_element_type(block_id);
+
+    if (metadata.size_parameter.has_value()) {
+        if (const auto lower = port_count_lower_bound(*metadata.size_parameter)) {
+            metadata.min_port_count = *lower;
+        }
+        if (const auto upper = port_count_upper_bound(*metadata.size_parameter)) {
+            metadata.max_port_count = *upper;
+        }
+    }
+    metadata.render_port_count = infer_collection_render_port_count(collection_name,
+                                                                     is_input,
+                                                                     parameters,
+                                                                     current_count,
+                                                                     metadata.min_port_count,
+                                                                     metadata.max_port_count);
+
+    return metadata;
+}
+
+domain::BlockPortDescriptor to_port_descriptor(const gr::BlockModel::DynamicPortOrCollection& port_or_collection,
+                                               std::string_view block_id,
+                                               const std::vector<domain::BlockParameterDescriptor>& parameters,
+                                               bool is_input) {
     return std::visit(
-        [](const auto& item) -> domain::BlockPortDescriptor {
+        [&](const auto& item) -> domain::BlockPortDescriptor {
             using T = std::decay_t<decltype(item)>;
             if constexpr (std::same_as<T, gr::DynamicPort>) {
-                return {.name = std::string(item.metaInfo.name), .type = item.typeName()};
+                domain::BlockPortDescriptor descriptor;
+                descriptor.name = std::string(item.metaInfo.name);
+                descriptor.type = item.typeName();
+                descriptor.cardinality_kind = domain::BlockPortCardinalityKind::Fixed;
+                descriptor.current_port_count = 1;
+                descriptor.render_port_count = 1;
+                descriptor.min_port_count = 1;
+                descriptor.max_port_count = 1;
+                return descriptor;
             } else {
-                const auto type = item.ports.empty() ? std::string() : std::string(item.ports.front().typeName());
-                return {.name = std::string(item.name), .type = std::move(type)};
+                std::string type = item.ports.empty() ? std::string() : std::string(item.ports.front().typeName());
+                const auto metadata = infer_collection_metadata(item.name, block_id, is_input, parameters, item.ports.size());
+                if (type.empty() && metadata.element_type.has_value()) {
+                    type = *metadata.element_type;
+                }
+                domain::BlockPortDescriptor descriptor;
+                descriptor.name = std::string(item.name);
+                descriptor.type = std::move(type);
+                descriptor.cardinality_kind = metadata.cardinality_kind;
+                descriptor.current_port_count = metadata.current_port_count;
+                descriptor.render_port_count = metadata.render_port_count;
+                descriptor.min_port_count = metadata.min_port_count;
+                descriptor.max_port_count = metadata.max_port_count;
+                descriptor.size_parameter = metadata.size_parameter;
+                descriptor.handle_name_template = metadata.handle_name_template;
+                return descriptor;
             }
         },
         port_or_collection);
 }
 
-std::vector<domain::BlockPortDescriptor> to_ports(gr::BlockModel::DynamicPorts& ports) {
+std::vector<domain::BlockPortDescriptor> to_ports(gr::BlockModel::DynamicPorts& ports,
+                                                  std::string_view block_id,
+                                                  const std::vector<domain::BlockParameterDescriptor>& parameters,
+                                                  bool is_input) {
     std::vector<domain::BlockPortDescriptor> descriptors;
     descriptors.reserve(ports.size());
     for (const auto& port : ports) {
-        descriptors.push_back(to_port_descriptor(port));
+        descriptors.push_back(to_port_descriptor(port, block_id, parameters, is_input));
     }
     return descriptors;
 }
@@ -567,14 +821,15 @@ domain::BlockDescriptor reflect_block(const std::string& id) {
         throw CatalogLoadError("failed to instantiate GNU Radio 4 block for catalog: " + id);
     }
 
+    auto parameters = to_parameters(*block);
     return {
         .id = id,
         .name = block_name(*block, id),
         .category = block_category(*block, id),
         .summary = "",
-        .inputs = to_ports(block->dynamicInputPorts()),
-        .outputs = to_ports(block->dynamicOutputPorts()),
-        .parameters = to_parameters(*block),
+        .inputs = to_ports(block->dynamicInputPorts(), id, parameters, true),
+        .outputs = to_ports(block->dynamicOutputPorts(), id, parameters, false),
+        .parameters = std::move(parameters),
     };
 }
 
@@ -583,7 +838,28 @@ nlohmann::json to_json(const domain::BlockParameterDefault& value) {
 }
 
 nlohmann::json to_json(const domain::BlockPortDescriptor& port) {
-    return nlohmann::json{{"name", port.name}, {"type", port.type}};
+    nlohmann::json value{{"name", port.name},
+                         {"type", port.type},
+                         {"cardinality_kind", std::string(cardinality_kind_to_string(port.cardinality_kind))}};
+    if (port.current_port_count.has_value()) {
+        value["current_port_count"] = *port.current_port_count;
+    }
+    if (port.render_port_count.has_value()) {
+        value["render_port_count"] = *port.render_port_count;
+    }
+    if (port.min_port_count.has_value()) {
+        value["min_port_count"] = *port.min_port_count;
+    }
+    if (port.max_port_count.has_value()) {
+        value["max_port_count"] = *port.max_port_count;
+    }
+    if (port.size_parameter.has_value()) {
+        value["size_parameter"] = *port.size_parameter;
+    }
+    if (port.handle_name_template.has_value()) {
+        value["handle_name_template"] = *port.handle_name_template;
+    }
+    return value;
 }
 
 nlohmann::json to_json(const domain::BlockParameterDescriptor& parameter) {
@@ -661,7 +937,33 @@ domain::BlockParameterDefault parse_default_value(const nlohmann::json& value) {
 }
 
 domain::BlockPortDescriptor parse_port_descriptor(const nlohmann::json& value) {
-    return {.name = value.at("name").get<std::string>(), .type = value.at("type").get<std::string>()};
+    domain::BlockPortDescriptor port;
+    port.name = value.at("name").get<std::string>();
+    port.type = value.at("type").get<std::string>();
+    if (const auto it = value.find("cardinality_kind"); it != value.end() && it->is_string()) {
+        if (const auto parsed = cardinality_kind_from_string(it->get<std::string>()); parsed.has_value()) {
+            port.cardinality_kind = *parsed;
+        }
+    }
+    if (const auto it = value.find("current_port_count"); it != value.end() && it->is_number_integer()) {
+        port.current_port_count = it->get<int>();
+    }
+    if (const auto it = value.find("render_port_count"); it != value.end() && it->is_number_integer()) {
+        port.render_port_count = it->get<int>();
+    }
+    if (const auto it = value.find("min_port_count"); it != value.end() && it->is_number_integer()) {
+        port.min_port_count = it->get<int>();
+    }
+    if (const auto it = value.find("max_port_count"); it != value.end() && it->is_number_integer()) {
+        port.max_port_count = it->get<int>();
+    }
+    if (const auto it = value.find("size_parameter"); it != value.end() && it->is_string()) {
+        port.size_parameter = it->get<std::string>();
+    }
+    if (const auto it = value.find("handle_name_template"); it != value.end() && it->is_string()) {
+        port.handle_name_template = it->get<std::string>();
+    }
+    return port;
 }
 
 domain::BlockParameterDescriptor parse_parameter_descriptor(const nlohmann::json& value) {

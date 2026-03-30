@@ -18,7 +18,32 @@ Json block_parameter_default_to_json(const domain::BlockParameterDefault& value)
 }
 
 Json block_port_to_json(const domain::BlockPortDescriptor& port) {
-    return Json{{"name", port.name}, {"type", port.type}};
+    auto body = Json{
+        {"name", port.name},
+        {"type", port.type},
+        {"cardinality_kind", port.cardinality_kind == domain::BlockPortCardinalityKind::Dynamic ? "dynamic" : "fixed"},
+    };
+
+    if (port.current_port_count.has_value()) {
+        body["current_port_count"] = *port.current_port_count;
+    }
+    if (port.render_port_count.has_value()) {
+        body["render_port_count"] = *port.render_port_count;
+    }
+    if (port.min_port_count.has_value()) {
+        body["min_port_count"] = *port.min_port_count;
+    }
+    if (port.max_port_count.has_value()) {
+        body["max_port_count"] = *port.max_port_count;
+    }
+    if (port.size_parameter.has_value()) {
+        body["size_parameter"] = *port.size_parameter;
+    }
+    if (port.handle_name_template.has_value()) {
+        body["handle_name_template"] = *port.handle_name_template;
+    }
+
+    return body;
 }
 
 Json block_parameter_to_json(const domain::BlockParameterDescriptor& parameter) {

@@ -167,6 +167,39 @@ TEST(Gr4BlockCatalogProviderTest, BlockDetailsIncludeBuiltinParametersAndExtende
     EXPECT_FALSE(amplitude->allow_custom_value.has_value());
 }
 
+TEST(Gr4BlockCatalogProviderTest, DynamicPortCollectionsExposeCollectionMetadata) {
+    gr4cp::catalog::Gr4BlockCatalogProvider provider;
+
+    std::vector<gr4cp::domain::BlockDescriptor> blocks;
+    try {
+        blocks = provider.list();
+    } catch (const gr4cp::catalog::CatalogLoadError& error) {
+        GTEST_SKIP() << error.what();
+    }
+
+    const auto block_it = std::find_if(blocks.begin(), blocks.end(), [](const auto& block) {
+        return block.id.find("Add<") != std::string::npos &&
+               std::any_of(block.inputs.begin(), block.inputs.end(), [](const auto& port) {
+                   return port.cardinality_kind == gr4cp::domain::BlockPortCardinalityKind::Dynamic;
+               });
+    });
+    ASSERT_NE(block_it, blocks.end());
+
+    const auto port_it = std::find_if(block_it->inputs.begin(), block_it->inputs.end(), [](const auto& port) {
+        return port.cardinality_kind == gr4cp::domain::BlockPortCardinalityKind::Dynamic;
+    });
+    ASSERT_NE(port_it, block_it->inputs.end());
+    EXPECT_EQ(port_it->name, "in");
+    EXPECT_FALSE(port_it->type.empty());
+    EXPECT_EQ(port_it->cardinality_kind, gr4cp::domain::BlockPortCardinalityKind::Dynamic);
+    EXPECT_TRUE(port_it->current_port_count.has_value());
+    EXPECT_TRUE(port_it->render_port_count.has_value());
+    EXPECT_TRUE(port_it->min_port_count.has_value());
+    EXPECT_TRUE(port_it->max_port_count.has_value());
+    EXPECT_TRUE(port_it->size_parameter.has_value());
+    EXPECT_TRUE(port_it->handle_name_template.has_value());
+}
+
 }  // namespace
 
 #endif

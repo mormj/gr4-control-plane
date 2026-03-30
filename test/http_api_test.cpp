@@ -29,7 +29,19 @@ public:
                 .name = "Add<float32>",
                 .category = "Math",
                 .summary = "Adds two float streams",
-                .inputs = {{"in0", "float32"}, {"in1", "float32"}},
+                .inputs = {[] {
+                    gr4cp::domain::BlockPortDescriptor port;
+                    port.name = "in";
+                    port.type = "float32";
+                    port.cardinality_kind = gr4cp::domain::BlockPortCardinalityKind::Dynamic;
+                    port.current_port_count = 2;
+                    port.render_port_count = 2;
+                    port.min_port_count = 1;
+                    port.max_port_count = 32;
+                    port.size_parameter = "n_inputs";
+                    port.handle_name_template = "in#${index}";
+                    return port;
+                }()},
                 .outputs = {{"out", "float32"}},
                 .parameters = {[] {
                     gr4cp::domain::BlockParameterDescriptor parameter("scale", "float", false, 1.0, "Scale factor");
@@ -38,6 +50,27 @@ public:
                     parameter.ui_hint = "advanced";
                     return parameter;
                 }()},
+            },
+            {
+                .id = "blocks.math.add_dynamic",
+                .name = "Add",
+                .category = "Math",
+                .summary = "Adds a dynamic number of float streams",
+                .inputs = {[] {
+                    gr4cp::domain::BlockPortDescriptor port;
+                    port.name = "in";
+                    port.type = "float";
+                    port.cardinality_kind = gr4cp::domain::BlockPortCardinalityKind::Dynamic;
+                    port.current_port_count = 3;
+                    port.render_port_count = 3;
+                    port.min_port_count = 1;
+                    port.max_port_count = 32;
+                    port.size_parameter = "n_inputs";
+                    port.handle_name_template = "in#${index}";
+                    return port;
+                }()},
+                .outputs = {{"out", "float"}},
+                .parameters = {{"n_inputs", "int", false, 3, "Number of inputs"}},
             },
             {
                 .id = "blocks.sources.signal_source_f",
@@ -222,7 +255,7 @@ TEST_F(HttpApiTest, GetBlocksSuccess) {
     expect_json_content_type(response);
 
     const auto body = parse_json(response);
-    ASSERT_EQ(body.size(), 4U);
+    ASSERT_EQ(body.size(), 5U);
     EXPECT_EQ(body[0]["category"], "Analog");
     EXPECT_EQ(body[0]["name"], "WFM Receive");
     EXPECT_TRUE(body[0]["inputs"].is_array());
@@ -236,7 +269,7 @@ TEST_F(HttpApiTest, GetBlocksUsesDeterministicOrdering) {
     ASSERT_TRUE(response);
     EXPECT_EQ(response->status, 200);
     const auto body = parse_json(response);
-    ASSERT_EQ(body.size(), 4U);
+    ASSERT_EQ(body.size(), 5U);
 
     for (std::size_t index = 1; index < body.size(); ++index) {
         const auto& previous = body[index - 1];
@@ -270,6 +303,24 @@ TEST_F(HttpApiTest, GetBlockByIdSuccess) {
     ASSERT_EQ(body["inputs"].size(), 2U);
     ASSERT_EQ(body["parameters"].size(), 1U);
     EXPECT_EQ(body["parameters"][0]["default"], 1.0);
+}
+
+TEST_F(HttpApiTest, GetBlockByIdIncludesDynamicCollectionMetadata) {
+    const auto response = client->Get("/blocks/blocks.math.add_dynamic");
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 200);
+
+    const auto body = parse_json(response);
+    ASSERT_EQ(body["inputs"].size(), 1U);
+    const auto& input = body["inputs"][0];
+    EXPECT_EQ(input["cardinality_kind"], "dynamic");
+    EXPECT_EQ(input["current_port_count"], 3);
+    EXPECT_EQ(input["render_port_count"], 3);
+    EXPECT_EQ(input["min_port_count"], 1);
+    EXPECT_EQ(input["max_port_count"], 32);
+    EXPECT_EQ(input["size_parameter"], "n_inputs");
+    EXPECT_EQ(input["handle_name_template"], "in#${index}");
 }
 
 TEST_F(HttpApiTest, GetBlockByIdIncludesExtendedParameterMetadataWhenAvailable) {
