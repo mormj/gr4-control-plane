@@ -239,7 +239,7 @@ int run_sessions(std::span<const std::string_view> args, std::ostream& out, std:
 
             auto& client = make_client(context.url);
             const auto body = Json{{"name", name}, {"grc", read_file(file_path)}};
-            out << pretty_json(request_json(client, "POST", "/sessions", body)) << '\n';
+            out << pretty_json(request_json(client, "POST", "/sessions", std::optional<Json>{body})) << '\n';
             return 0;
         }
 

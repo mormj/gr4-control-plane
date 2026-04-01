@@ -47,7 +47,8 @@ The repository publishes two images to GHCR:
   - build/development image
   - built from the `sdk` target in [`Dockerfile`](Dockerfile)
   - intended as a base for downstream OOTs that need the same GNU Radio 4 / libc++ ABI surface
-  - built from Ubuntu 24.04 and a source build of GNU Radio 4 for now
+  - built from Ubuntu 25.10 with gcc-15 / g++-15 and a source build of GNU Radio 4 for now
+  - exports `CC=gcc-15` and `CXX=g++-15` so derived images inherit the toolchain default
 
 The SDK image can be used as a `FROM` base in downstream block repositories. For example:
 

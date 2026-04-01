@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:25.10 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -26,9 +26,9 @@ RUN apt-get update -q && apt-get install --no-install-recommends -qy \
     && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update -q && apt-get install --no-install-recommends -qy \
-    gcc-14 \
-    g++-14 \
-    libstdc++-14-dev \
+    gcc-15 \
+    g++-15 \
+    libstdc++-15-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update -q && apt-get install --no-install-recommends -qy \
@@ -53,10 +53,11 @@ WORKDIR /opt
 
 FROM base AS gnuradio4-builder
 
-ARG GNURADIO4_REPO=https://github.com/gnuradio/gnuradio4.git
-ARG GNURADIO4_REF=main
+ARG GNURADIO4_REPO=https://github.com/mormj/gnuradio4.git
+ARG GNURADIO4_REF=add_with_complex
 ARG GR4_INCUBATOR_REPO=https://github.com/gnuradio/gr4-incubator.git
 ARG GR4_INCUBATOR_REF=main
+ARG GR_SPLIT_BLOCK_INSTANTIATIONS=OFF
 
 RUN git clone --depth 1 --branch "${GNURADIO4_REF}" "${GNURADIO4_REPO}" /opt/gnuradio4
 
@@ -65,8 +66,8 @@ WORKDIR /opt/gnuradio4
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithAssert \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_C_COMPILER=gcc-14 \
-      -DCMAKE_CXX_COMPILER=g++-14 \
+      -DCMAKE_C_COMPILER=gcc-15 \
+      -DCMAKE_CXX_COMPILER=g++-15 \
       -DGR_ENABLE_BLOCK_REGISTRY=ON \
       -DWARNINGS_AS_ERRORS=ON \
       -DTIMETRACE=OFF \
@@ -74,6 +75,7 @@ RUN cmake -S . -B build -G Ninja \
       -DUB_SANITIZER=OFF \
       -DTHREAD_SANITIZER=OFF \
       -DBUILD_SHARED_LIBS=ON \
+      -DGR_SPLIT_BLOCK_INSTANTIATIONS="${GR_SPLIT_BLOCK_INSTANTIATIONS}" \
       -DGR4_USE_LIBCXX=OFF \
       -DENABLE_TESTING=OFF \
       -DENABLE_EXAMPLES=OFF \
@@ -87,8 +89,8 @@ WORKDIR /opt/gr4-incubator
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_C_COMPILER=gcc-14 \
-      -DCMAKE_CXX_COMPILER=g++-14 \
+      -DCMAKE_C_COMPILER=gcc-15 \
+      -DCMAKE_CXX_COMPILER=g++-15 \
       -DENABLE_TESTING=OFF \
       -DENABLE_EXAMPLES=OFF \
       -DENABLE_GUI_EXAMPLES=OFF \
@@ -115,8 +117,8 @@ COPY . .
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="${GR4CP_INSTALL_PREFIX}" \
-      -DCMAKE_C_COMPILER=gcc-14 \
-      -DCMAKE_CXX_COMPILER=g++-14 \
+      -DCMAKE_C_COMPILER=gcc-15 \
+      -DCMAKE_CXX_COMPILER=g++-15 \
       -DGR4CP_GNURADIO4_PREFIX=/usr/local \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
@@ -138,12 +140,14 @@ LABEL org.opencontainers.image.title="gr4-control-plane-sdk" \
       org.opencontainers.image.version="${OCI_VERSION}"
 
 ENV PATH="/opt/gr4-control-plane/bin:${PATH}" \
-    GNURADIO4_PLUGIN_DIRECTORIES="/usr/local/lib:/opt/gr4-control-plane/lib"
+    GNURADIO4_PLUGIN_DIRECTORIES="/usr/local/lib:/opt/gr4-control-plane/lib" \
+    CC=gcc-15 \
+    CXX=g++-15
 
 WORKDIR /workspace
 CMD ["/bin/bash"]
 
-FROM ubuntu:24.04 AS runtime
+FROM ubuntu:25.10 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -157,7 +161,7 @@ RUN apt-get update -q && apt-get install --no-install-recommends -qy \
     libcurl4 \
     libjack-jackd2-0 \
     libportaudio2 \
-    librtaudio6 \
+    librtaudio7 \
     libssl3 \
     libsoapysdr0.8 \
     libzmq5 \
