@@ -38,28 +38,44 @@ Built executables:
 
 ## Docker Images
 
-The repository publishes two images to GHCR:
+The repository now uses three Docker images:
 
-- `ghcr.io/<owner>/gr4-control-plane-runtime`
+- `ghcr.io/<owner>/gnuradio4-sdk:latest`
+  - GNU Radio 4 base SDK image
+  - built from the `gnuradio4-sdk` target in [`Dockerfile`](Dockerfile)
+  - includes GNU Radio 4 and `gr4-incubator`
+  - intended as the shared base for this repo and downstream OOT builds
+- `ghcr.io/<owner>/gr4-control-plane-sdk:latest`
+  - control-plane SDK image
+  - built from the `sdk` target in [`Dockerfile`](Dockerfile)
+  - includes the installed `gr4-control-plane` surface on top of `gnuradio4-sdk`
+- `ghcr.io/<owner>/gr4-control-plane-runtime:latest`
   - lean runtime image
   - built from the `runtime` target in [`Dockerfile`](Dockerfile)
-- `ghcr.io/<owner>/gr4-control-plane-sdk`
-  - build/development image
-  - built from the `sdk` target in [`Dockerfile`](Dockerfile)
-  - intended as a base for downstream OOTs that need the same GNU Radio 4 / libc++ ABI surface
-  - built from Ubuntu 24.04 and a source build of GNU Radio 4 for now
+
+All three images are published as multi-arch manifests for `linux/amd64` and `linux/arm64`, so they can run on both standard Linux hosts and Apple Silicon.
 
 The SDK image can be used as a `FROM` base in downstream block repositories. For example:
 
 ```dockerfile
-FROM ghcr.io/<owner>/gr4-control-plane-sdk:latest
+FROM ghcr.io/<owner>/gnuradio4-sdk:latest
 
 WORKDIR /workspace/my-oot
 COPY . .
 RUN cmake -S . -B build && cmake --build build -j"$(nproc)"
 ```
 
-GitHub Actions publishes both images on pushes to `main` and version tags. Pull requests build the images and run tests, but do not push.
+GitHub Actions behavior:
+
+- `workflow_dispatch`
+  - can rebuild and publish `gnuradio4-sdk:latest`
+- pull requests
+  - build and test the control-plane SDK image only
+  - do not publish
+- pushes to `main`
+  - use `gnuradio4-sdk:latest`
+  - build and publish `gr4-control-plane-sdk:latest`
+  - build and publish `gr4-control-plane-runtime:latest`
 
 ## HTTP API
 
