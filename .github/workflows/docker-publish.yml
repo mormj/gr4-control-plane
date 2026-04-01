@@ -1,0 +1,170 @@
+name: Docker CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  DOCKER_CONTEXT: .
+  DOCKERFILE_PATH: ./Dockerfile
+  DOCKER_PLATFORMS: linux/amd64
+  RUNTIME_IMAGE_NAME: gr4-control-plane-runtime
+  SDK_IMAGE_NAME: gr4-control-plane-sdk
+  GNURADIO4_REPO: https://github.com/gnuradio/gnuradio4.git
+  GNURADIO4_REF: main
+
+jobs:
+  test:
+    name: Build and test container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image names
+        id: image-vars
+        shell: bash
+        run: |
+          owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "runtime_image=ghcr.io/${owner}/${RUNTIME_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "sdk_image=ghcr.io/${owner}/${SDK_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build SDK image for tests
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.DOCKER_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          target: sdk
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          load: true
+          push: false
+          tags: ${{ steps.image-vars.outputs.sdk_image }}:ci
+          build-args: |
+            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
+            GNURADIO4_REF=${{ env.GNURADIO4_REF }}
+            OCI_SOURCE=https://github.com/${{ github.repository }}
+            OCI_URL=https://github.com/${{ github.repository }}
+            OCI_REVISION=${{ github.sha }}
+            OCI_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=gr4-control-plane-sdk
+          cache-to: type=gha,scope=gr4-control-plane-sdk,mode=max
+
+      - name: Build and run tests inside the SDK image
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace/gr4-control-plane" \
+            -w /workspace/gr4-control-plane \
+            ${{ steps.image-vars.outputs.sdk_image }}:ci \
+            bash -lc '
+              set -euo pipefail
+              cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DGR4CP_GNURADIO4_PREFIX=/usr/local
+              cmake --build build -j"$(nproc)"
+              ctest --test-dir build --output-on-failure
+            '
+
+  publish:
+    name: Build and publish images
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image names
+        id: image-vars
+        shell: bash
+        run: |
+          owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "runtime_image=ghcr.io/${owner}/${RUNTIME_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "sdk_image=ghcr.io/${owner}/${SDK_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate runtime metadata
+        id: meta-runtime
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image-vars.outputs.runtime_image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Generate SDK metadata
+        id: meta-sdk
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image-vars.outputs.sdk_image }}
+          tags: |
+            type=semver,pattern={{version}},suffix=-sdk
+            type=sha,prefix=sha-,suffix=-sdk
+            type=raw,value=latest-sdk,enable={{is_default_branch}}
+
+      - name: Build and push runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.DOCKER_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          target: runtime
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta-runtime.outputs.tags }}
+          labels: ${{ steps.meta-runtime.outputs.labels }}
+          build-args: |
+            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
+            GNURADIO4_REF=${{ env.GNURADIO4_REF }}
+            OCI_SOURCE=https://github.com/${{ github.repository }}
+            OCI_URL=https://github.com/${{ github.repository }}
+            OCI_REVISION=${{ github.sha }}
+            OCI_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=gr4-control-plane-runtime
+          cache-to: type=gha,scope=gr4-control-plane-runtime,mode=max
+
+      - name: Build and push SDK image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.DOCKER_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          target: sdk
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta-sdk.outputs.tags }}
+          labels: ${{ steps.meta-sdk.outputs.labels }}
+          build-args: |
+            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
+            GNURADIO4_REF=${{ env.GNURADIO4_REF }}
+            OCI_SOURCE=https://github.com/${{ github.repository }}
+            OCI_URL=https://github.com/${{ github.repository }}
+            OCI_REVISION=${{ github.sha }}
+            OCI_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=gr4-control-plane-sdk
+          cache-to: type=gha,scope=gr4-control-plane-sdk,mode=max

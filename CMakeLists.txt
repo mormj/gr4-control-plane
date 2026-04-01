@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(GNUInstallDirs)
+
 option(USE_CCACHE "Use ccache if available" ON)
 
 option(GR4CP_ENABLE_GR4_CATALOG "Enable the required GNU Radio 4-backed block catalog provider" ON)
@@ -109,7 +111,7 @@ if(GR4CP_HAVE_GNURADIO4)
     )
     target_link_libraries(gr4cp_core
         PUBLIC
-            "$<LINK_LIBRARY:WHOLE_ARCHIVE,gnuradio4::gnuradio-core>"
+            gnuradio4::gnuradio-core
             gnuradio4::gnuradio-blocklib-core
     )
     set(_gr4cp_test_env
@@ -268,3 +270,12 @@ if(GR4CP_HAVE_GNURADIO4)
 else()
     gtest_discover_tests(gr4cp_cli_test)
 endif()
+
+install(TARGETS gr4cp_server gr4cp_cli_exec
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY include/gr4cp/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gr4cp
+    FILES_MATCHING PATTERN "*.hpp"
+)

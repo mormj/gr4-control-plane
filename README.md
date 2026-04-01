@@ -36,6 +36,31 @@ Built executables:
 - `build/gr4cp_server`
 - `build/gr4cp-cli`
 
+## Docker Images
+
+The repository publishes two images to GHCR:
+
+- `ghcr.io/<owner>/gr4-control-plane-runtime`
+  - lean runtime image
+  - built from the `runtime` target in [`Dockerfile`](Dockerfile)
+- `ghcr.io/<owner>/gr4-control-plane-sdk`
+  - build/development image
+  - built from the `sdk` target in [`Dockerfile`](Dockerfile)
+  - intended as a base for downstream OOTs that need the same GNU Radio 4 / libc++ ABI surface
+  - built from Ubuntu 24.04 and a source build of GNU Radio 4 for now
+
+The SDK image can be used as a `FROM` base in downstream block repositories. For example:
+
+```dockerfile
+FROM ghcr.io/<owner>/gr4-control-plane-sdk:latest
+
+WORKDIR /workspace/my-oot
+COPY . .
+RUN cmake -S . -B build && cmake --build build -j"$(nproc)"
+```
+
+GitHub Actions publishes both images on pushes to `main` and version tags. Pull requests build the images and run tests, but do not push.
+
 ## HTTP API
 
 The public API consists of 11 product endpoints plus temporary `GET /healthz`:
