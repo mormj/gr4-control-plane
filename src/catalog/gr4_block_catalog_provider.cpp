@@ -371,6 +371,23 @@ std::string block_category(const gr::BlockModel& block, const std::string& id) {
 
 std::optional<std::string> parameter_meta_string(const gr::property_map& meta,
                                                  std::string_view parameter_name,
+                                                 std::string_view suffix);
+
+std::string block_summary(const gr::BlockModel& block) {
+    const auto& meta = block.metaInformation();
+    if (const auto description = parameter_meta_string(meta, "", "description");
+        description.has_value() && !description->empty()) {
+        return *description;
+    }
+    if (const auto description = parameter_meta_string(meta, "", "Description");
+        description.has_value() && !description->empty()) {
+        return *description;
+    }
+    return "";
+}
+
+std::optional<std::string> parameter_meta_string(const gr::property_map& meta,
+                                                 std::string_view parameter_name,
                                                  std::string_view suffix) {
     const auto it = meta.find(std::string(parameter_name) + std::string(suffix));
     if (it == meta.end()) {
@@ -829,13 +846,15 @@ domain::BlockDescriptor reflect_block(const std::string& id) {
         throw CatalogLoadError("failed to instantiate GNU Radio 4 block for catalog: " + id);
     }
 
+    block->settings().init();
     auto parameters = to_parameters(*block);
+    const auto summary = block_summary(*block);
     return {
         .id = id,
         .canonical_type = reflected_canonical_type(*block),
         .name = block_name(*block, id),
         .category = block_category(*block, id),
-        .summary = "",
+        .summary = summary,
         .inputs = to_ports(block->dynamicInputPorts(), id, parameters, true),
         .outputs = to_ports(block->dynamicOutputPorts(), id, parameters, false),
         .parameters = std::move(parameters),

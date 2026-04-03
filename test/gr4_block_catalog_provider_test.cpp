@@ -113,6 +113,7 @@ TEST(Gr4BlockCatalogProviderTest, BlockDetailsIncludeBuiltinParametersAndExtende
         return block.id == "gr::basic::SignalGenerator<float32>";
     });
     ASSERT_NE(block_it, blocks.end());
+    EXPECT_FALSE(block_it->summary.empty());
 
     const auto parameter_by_name = [&](std::string_view name) -> const gr4cp::domain::BlockParameterDescriptor* {
         const auto it = std::find_if(block_it->parameters.begin(), block_it->parameters.end(), [&](const auto& parameter) {
