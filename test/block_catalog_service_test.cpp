@@ -95,6 +95,48 @@ TEST_F(BlockCatalogServiceTest, ListCollapsesAliasShapeDuplicatesButKeepsExactLo
     EXPECT_EQ(alias_block.name, "Signal Source");
 }
 
+TEST(BlockCatalogServiceAliasSelectionTest, ListPrefersAliasOverCanonicalImplementationEntry) {
+    class AliasSelectionProvider final : public gr4cp::catalog::BlockCatalogProvider {
+    public:
+        std::vector<gr4cp::domain::BlockDescriptor> list() const override {
+            return {
+                {
+                    .id = "gr::blocks::math::MathOpImpl<float, std::multiplies<float>>",
+                    .canonical_type = "gr::blocks::math::MathOpImpl<float, std::multiplies<float>>",
+                    .name = "Mathopimpl<float, std::multiplies<float>>",
+                    .category = "Math",
+                    .summary = "",
+                    .inputs = {{"in", "float"}},
+                    .outputs = {{"out", "float"}},
+                    .parameters = {},
+                },
+                {
+                    .id = "gr::blocks::math::MultiplyConst<float, std::multiplies<float>>",
+                    .canonical_type = "gr::blocks::math::MathOpImpl<float, std::multiplies<float>>",
+                    .name = "Multiplyconst<float, std::multiplies<float>>",
+                    .category = "Math",
+                    .summary = "",
+                    .inputs = {{"in", "float"}},
+                    .outputs = {{"out", "float"}},
+                    .parameters = {},
+                },
+            };
+        }
+    } provider;
+
+    gr4cp::app::BlockCatalogService service{provider};
+    const auto blocks = service.list();
+
+    ASSERT_EQ(blocks.size(), 1U);
+    EXPECT_EQ(blocks.front().id, "gr::blocks::math::MultiplyConst<float, std::multiplies<float>>");
+
+    const auto canonical = service.get("gr::blocks::math::MathOpImpl<float, std::multiplies<float>>");
+    EXPECT_EQ(canonical.id, "gr::blocks::math::MathOpImpl<float, std::multiplies<float>>");
+
+    const auto alias = service.get("gr::blocks::math::MultiplyConst<float, std::multiplies<float>>");
+    EXPECT_EQ(alias.id, "gr::blocks::math::MultiplyConst<float, std::multiplies<float>>");
+}
+
 TEST_F(BlockCatalogServiceTest, GetMissingBlockFails) {
     EXPECT_THROW(service.get("blocks.missing"), gr4cp::app::NotFoundError);
 }
