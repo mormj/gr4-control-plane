@@ -396,19 +396,6 @@ std::optional<std::string> parameter_meta_string(const gr::property_map& meta,
     return value_to_string(it->second);
 }
 
-std::optional<bool> parameter_meta_bool(const gr::property_map& meta,
-                                        std::string_view parameter_name,
-                                        std::string_view suffix) {
-    const auto it = meta.find(std::string(parameter_name) + std::string(suffix));
-    if (it == meta.end()) {
-        return std::nullopt;
-    }
-    if (const auto* value = it->second.get_if<bool>(); value != nullptr) {
-        return *value;
-    }
-    return std::nullopt;
-}
-
 std::string parameter_type_name(const gr::pmt::Value& value) {
     using ValueType = gr::pmt::Value::ValueType;
 
@@ -486,27 +473,18 @@ std::optional<std::string> parameter_value_kind(const gr::pmt::Value& value) {
 }
 
 std::optional<std::string> parameter_runtime_mutability(std::string_view name) {
-    // GNU Radio 4 reflection gives us settings visibility and descriptions, but not a complete
-    // UI-grade signal for which built-in/system parameters should be treated as user-editable at
-    // runtime. Use a conservative heuristic here: default built-ins to non-mutable unless we have
-    // strong product-level reason to advertise them as editable. False negatives are safer than
-    // false positives for Studio.
-    if (name == "unique_name" || name == "compute_domain" || name == "disconnect_on_done" ||
-        name == "input_chunk_size" || name == "output_chunk_size" || name == "stride" ||
-        name == "name" || name == "ui_constraints") {
+    if (name == "name" || name == "unique_name") {
         return std::string("immutable");
     }
     return std::nullopt;
 }
 
-std::optional<std::string> parameter_ui_hint(std::string_view name, const gr::property_map& meta) {
-    if (name == "name" || name == "compute_domain" || name == "disconnect_on_done" || name == "ui_constraints" ||
-        name == "unique_name" || name == "input_chunk_size" || name == "output_chunk_size" || name == "stride") {
-        return std::string("advanced");
+std::optional<std::string> parameter_ui_hint(std::string_view name) {
+    if (name == "name" || name == "unique_name") {
+        return std::string("read_only");
     }
-
-    const auto visible = parameter_meta_bool(meta, name, "::visible");
-    if (visible.has_value() && !*visible) {
+    if (name == "compute_domain" || name == "disconnect_on_done" || name == "ui_constraints" ||
+        name == "input_chunk_size" || name == "output_chunk_size" || name == "stride") {
         return std::string("advanced");
     }
 
@@ -825,7 +803,7 @@ std::vector<domain::BlockParameterDescriptor> to_parameters(gr::BlockModel& bloc
             parameter_summary(meta_information, name));
         descriptor.runtime_mutability = parameter_runtime_mutability(name);
         descriptor.value_kind = parameter_value_kind(value);
-        descriptor.ui_hint = parameter_ui_hint(name, meta_information);
+        descriptor.ui_hint = parameter_ui_hint(name);
         descriptors.push_back(std::move(descriptor));
     }
     std::sort(descriptors.begin(), descriptors.end(), [](const auto& left, const auto& right) {
