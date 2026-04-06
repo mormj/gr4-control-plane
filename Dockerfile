@@ -53,10 +53,8 @@ WORKDIR /opt
 
 FROM base AS gnuradio4-builder
 
-ARG GNURADIO4_REPO=https://github.com/mormj/gnuradio4.git
-ARG GNURADIO4_REF=add_with_complex
-ARG GR4_INCUBATOR_REPO=https://github.com/gnuradio/gr4-incubator.git
-ARG GR4_INCUBATOR_REF=main
+ARG GNURADIO4_REPO=https://github.com/gnuradio/gnuradio4.git
+ARG GNURADIO4_REF=main
 ARG GR_SPLIT_BLOCK_INSTANTIATIONS=OFF
 
 RUN git clone --depth 1 --branch "${GNURADIO4_REF}" "${GNURADIO4_REPO}" /opt/gnuradio4
@@ -82,25 +80,52 @@ RUN cmake -S . -B build -G Ninja \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
 
-RUN git clone --depth 1 --branch "${GR4_INCUBATOR_REF}" "${GR4_INCUBATOR_REPO}" /opt/gr4-incubator
+FROM base AS gnuradio4-sdk
 
-WORKDIR /opt/gr4-incubator
-
-RUN cmake -S . -B build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_C_COMPILER=gcc-15 \
-      -DCMAKE_CXX_COMPILER=g++-15 \
-      -DENABLE_TESTING=OFF \
-      -DENABLE_EXAMPLES=OFF \
-      -DENABLE_GUI_EXAMPLES=OFF \
-      -DENABLE_PLUGINS=ON \
-    && cmake --build build -j"$(nproc)" \
-    && cmake --install build
-
-FROM base AS toolchain
+ARG OCI_SOURCE
+ARG OCI_URL
+ARG OCI_REVISION
+ARG OCI_VERSION
 
 COPY --from=gnuradio4-builder /usr/local /usr/local
+
+RUN ldconfig
+
+LABEL org.opencontainers.image.title="gr4-gnuradio4-sdk" \
+      org.opencontainers.image.description="GNU Radio 4 base SDK image for building compatible downstream plugins" \
+      org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.url="${OCI_URL}" \
+      org.opencontainers.image.revision="${OCI_REVISION}" \
+      org.opencontainers.image.version="${OCI_VERSION}"
+
+ENV GR4CP_GNURADIO4_PREFIX=/usr/local \
+    GNURADIO4_PLUGIN_DIRECTORIES=/usr/local/lib \
+    CC=gcc-15 \
+    CXX=g++-15
+
+ARG GNURADIO4_SDK_IMAGE=gnuradio4-sdk
+
+FROM ${GNURADIO4_SDK_IMAGE} AS toolchain
+
+ARG BUILD_GR4_INCUBATOR=ON
+ARG GR4_INCUBATOR_REPO=https://github.com/gnuradio/gr4-incubator.git
+ARG GR4_INCUBATOR_REF=main
+
+RUN if [ "${BUILD_GR4_INCUBATOR}" = "ON" ]; then \
+      git clone --depth 1 --branch "${GR4_INCUBATOR_REF}" "${GR4_INCUBATOR_REPO}" /opt/gr4-incubator && \
+      cd /opt/gr4-incubator && \
+      cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_C_COMPILER=gcc-15 \
+        -DCMAKE_CXX_COMPILER=g++-15 \
+        -DENABLE_TESTING=OFF \
+        -DENABLE_EXAMPLES=OFF \
+        -DENABLE_GUI_EXAMPLES=OFF \
+        -DENABLE_PLUGINS=ON && \
+      cmake --build build -j"$(nproc)" && \
+      cmake --install build; \
+    fi
 
 RUN ldconfig
 

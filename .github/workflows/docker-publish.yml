@@ -3,20 +3,15 @@ name: Docker CI
 on:
   push:
     branches: [ci-docker]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
     inputs:
       gnuradio4_ref:
-        description: 'GR4 ref to build'
+        description: 'GR4 ref to build for the base SDK image'
         required: false
         default: 'main'
-      gr4_incubator_ref:
-        description: 'gr4-incubator ref to build'
-        required: false
-        default: 'main'
-      push_images:
-        description: 'Push images to GHCR'
+      publish_gnuradio4_base:
+        description: 'Build and publish the GNU Radio 4 base SDK image'
         required: false
         type: boolean
         default: false
@@ -29,8 +24,10 @@ env:
   BUILD_CONTEXT: .
   DOCKERFILE_PATH: ./Dockerfile
   DOCKER_PLATFORMS: linux/amd64
-  RUNTIME_IMAGE_NAME: gr4-control-plane-runtime
-  SDK_IMAGE_NAME: gr4-control-plane-sdk
+  GNURADIO4_BASE_IMAGE_NAME: gr4-gnuradio4-sdk
+  CONTROL_PLANE_RUNTIME_IMAGE_NAME: gr4-control-plane-runtime
+  CONTROL_PLANE_SDK_IMAGE_NAME: gr4-control-plane-sdk
+  CONTROL_PLANE_BUILDER_IMAGE_NAME: gr4-control-plane-builder
   GNURADIO4_REPO: https://github.com/gnuradio/gnuradio4.git
   GNURADIO4_REF: main
   GR4_INCUBATOR_REPO: https://github.com/gnuradio/gr4-incubator.git
@@ -38,10 +35,64 @@ env:
   GR_SPLIT_BLOCK_INSTANTIATIONS: ON
 
 jobs:
-  docker:
-    name: Build and publish images
+  gnuradio4-base:
+    name: Build GNU Radio 4 base SDK
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_gnuradio4_base == true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve base image settings
+        id: build-settings
+        shell: bash
+        run: |
+          owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          base_image="ghcr.io/${owner}/${GNURADIO4_BASE_IMAGE_NAME}"
+          {
+            echo "base_image=${base_image}"
+            echo "gnuradio4_ref=${{ github.event_name == 'workflow_dispatch' && inputs.gnuradio4_ref || env.GNURADIO4_REF }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish GNU Radio 4 base SDK image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          target: gnuradio4-sdk
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: true
+          tags: ${{ steps.build-settings.outputs.base_image }}:latest
+          build-args: |
+            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
+            GNURADIO4_REF=${{ steps.build-settings.outputs.gnuradio4_ref }}
+            GR_SPLIT_BLOCK_INSTANTIATIONS=${{ env.GR_SPLIT_BLOCK_INSTANTIATIONS }}
+            OCI_SOURCE=https://github.com/gnuradio/gnuradio4
+            OCI_URL=https://github.com/gnuradio/gnuradio4
+            OCI_REVISION=${{ steps.build-settings.outputs.gnuradio4_ref }}
+            OCI_VERSION=${{ steps.build-settings.outputs.gnuradio4_ref }}
+          cache-from: type=gha,scope=gr4-gnuradio4-sdk
+          cache-to: type=gha,scope=gr4-gnuradio4-sdk,mode=max
+
+  control-plane:
+    name: Build, test, and publish control-plane images
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
 
     steps:
       - name: Checkout
@@ -57,20 +108,24 @@ jobs:
         shell: bash
         run: |
           owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          runtime_image="ghcr.io/${owner}/${RUNTIME_IMAGE_NAME}"
-          sdk_image="ghcr.io/${owner}/${SDK_IMAGE_NAME}"
+          base_image="ghcr.io/${owner}/${GNURADIO4_BASE_IMAGE_NAME}"
+          runtime_image="ghcr.io/${owner}/${CONTROL_PLANE_RUNTIME_IMAGE_NAME}"
+          sdk_image="ghcr.io/${owner}/${CONTROL_PLANE_SDK_IMAGE_NAME}"
+          builder_image="ghcr.io/${owner}/${CONTROL_PLANE_BUILDER_IMAGE_NAME}"
           push_images="false"
+          build_incubator="false"
           if [[ '${{ github.event_name }}' == 'push' ]]; then
             push_images="true"
-          elif [[ '${{ github.event_name }}' == 'workflow_dispatch' && '${{ inputs.push_images }}' == 'true' ]]; then
-            push_images="true"
+            build_incubator="true"
           fi
           {
+            echo "base_image=${base_image}"
             echo "runtime_image=${runtime_image}"
             echo "sdk_image=${sdk_image}"
+            echo "builder_image=${builder_image}"
+            echo "gnuradio4_sdk_image_ref=${base_image}:latest"
             echo "push_images=${push_images}"
-            echo "gnuradio4_ref=${{ github.event_name == 'workflow_dispatch' && inputs.gnuradio4_ref || env.GNURADIO4_REF }}"
-            echo "gr4_incubator_ref=${{ github.event_name == 'workflow_dispatch' && inputs.gr4_incubator_ref || env.GR4_INCUBATOR_REF }}"
+            echo "build_incubator=${build_incubator}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -81,27 +136,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate runtime metadata
-        id: meta-runtime
-        uses: docker/metadata-action@v5
+      - name: Build control-plane builder image for tests
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
         with:
-          images: ${{ steps.build-settings.outputs.runtime_image }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          target: builder
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          load: true
+          push: false
+          tags: ${{ steps.build-settings.outputs.builder_image }}:ci
+          build-args: |
+            GNURADIO4_SDK_IMAGE=${{ steps.build-settings.outputs.gnuradio4_sdk_image_ref }}
+            BUILD_GR4_INCUBATOR=OFF
+            OCI_SOURCE=https://github.com/${{ github.repository }}
+            OCI_URL=https://github.com/${{ github.repository }}
+            OCI_REVISION=${{ github.sha }}
+            OCI_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=gr4-control-plane-builder
+          cache-to: type=gha,scope=gr4-control-plane-builder,mode=max
 
-      - name: Generate SDK metadata
-        id: meta-sdk
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.build-settings.outputs.sdk_image }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Run control-plane tests
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          docker run --rm \
+            -w /workspaces/gr4-control-plane \
+            ${{ steps.build-settings.outputs.builder_image }}:ci \
+            ctest --test-dir build --output-on-failure
 
-      - name: Build SDK image
+      - name: Build control-plane SDK image
         uses: docker/build-push-action@v6
         with:
           context: ${{ env.BUILD_CONTEXT }}
@@ -110,14 +175,12 @@ jobs:
           platforms: ${{ env.DOCKER_PLATFORMS }}
           load: ${{ steps.build-settings.outputs.push_images != 'true' }}
           push: ${{ steps.build-settings.outputs.push_images == 'true' }}
-          tags: ${{ steps.meta-sdk.outputs.tags }}
-          labels: ${{ steps.meta-sdk.outputs.labels }}
+          tags: ${{ steps.build-settings.outputs.sdk_image }}:latest
           build-args: |
-            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
-            GNURADIO4_REF=${{ steps.build-settings.outputs.gnuradio4_ref }}
+            GNURADIO4_SDK_IMAGE=${{ steps.build-settings.outputs.gnuradio4_sdk_image_ref }}
+            BUILD_GR4_INCUBATOR=${{ steps.build-settings.outputs.build_incubator }}
             GR4_INCUBATOR_REPO=${{ env.GR4_INCUBATOR_REPO }}
-            GR4_INCUBATOR_REF=${{ steps.build-settings.outputs.gr4_incubator_ref }}
-            GR_SPLIT_BLOCK_INSTANTIATIONS=${{ env.GR_SPLIT_BLOCK_INSTANTIATIONS }}
+            GR4_INCUBATOR_REF=${{ env.GR4_INCUBATOR_REF }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
             OCI_URL=https://github.com/${{ github.repository }}
             OCI_REVISION=${{ github.sha }}
@@ -125,22 +188,21 @@ jobs:
           cache-from: type=gha,scope=gr4-control-plane-sdk
           cache-to: type=gha,scope=gr4-control-plane-sdk,mode=max
 
-      - name: Build runtime image
+      - name: Build control-plane runtime image
+        if: steps.build-settings.outputs.push_images == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ${{ env.BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE_PATH }}
           target: runtime
           platforms: ${{ env.DOCKER_PLATFORMS }}
-          push: ${{ steps.build-settings.outputs.push_images == 'true' }}
-          tags: ${{ steps.meta-runtime.outputs.tags }}
-          labels: ${{ steps.meta-runtime.outputs.labels }}
+          push: true
+          tags: ${{ steps.build-settings.outputs.runtime_image }}:latest
           build-args: |
-            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
-            GNURADIO4_REF=${{ steps.build-settings.outputs.gnuradio4_ref }}
+            GNURADIO4_SDK_IMAGE=${{ steps.build-settings.outputs.gnuradio4_sdk_image_ref }}
+            BUILD_GR4_INCUBATOR=${{ steps.build-settings.outputs.build_incubator }}
             GR4_INCUBATOR_REPO=${{ env.GR4_INCUBATOR_REPO }}
-            GR4_INCUBATOR_REF=${{ steps.build-settings.outputs.gr4_incubator_ref }}
-            GR_SPLIT_BLOCK_INSTANTIATIONS=${{ env.GR_SPLIT_BLOCK_INSTANTIATIONS }}
+            GR4_INCUBATOR_REF=${{ env.GR4_INCUBATOR_REF }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
             OCI_URL=https://github.com/${{ github.repository }}
             OCI_REVISION=${{ github.sha }}
