@@ -1,8 +1,6 @@
 #include "gr4cp/app/block_catalog_service.hpp"
 
 #include <algorithm>
-#include <cstdlib>
-#include <iostream>
 #include <unordered_set>
 
 #include "gr4cp/app/session_service.hpp"
@@ -98,14 +96,6 @@ const BlockCatalogService::CachedCatalog& BlockCatalogService::cached_catalog() 
                       }
                       return left.id < right.id;
                   });
-        if (const char* debug = std::getenv("GR4CP_DEBUG_CATALOG_DUMP"); debug != nullptr && *debug != '\0') {
-            std::cerr << "gr4cp catalog dump: browse=" << catalog.browse_blocks.size()
-                      << " exact=" << catalog.exact_blocks.size() << '\n';
-            for (const auto& block : catalog.browse_blocks) {
-                std::cerr << "  browse: " << block.id << " | canonical="
-                          << (block.canonical_type.has_value() ? *block.canonical_type : std::string("<none>")) << '\n';
-            }
-        }
         cached_catalog_ = std::move(catalog);
     }
     return *cached_catalog_;

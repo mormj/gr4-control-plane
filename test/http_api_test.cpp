@@ -6,6 +6,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -341,7 +342,6 @@ TEST_F(HttpApiTest, GetBlockByIdIncludesExtendedParameterMetadataWhenAvailable) 
     EXPECT_EQ(parameter["runtime_mutability"], "mutable");
     EXPECT_EQ(parameter["value_kind"], "scalar");
     EXPECT_EQ(parameter["ui_hint"], "advanced");
-    EXPECT_FALSE(parameter.contains("enum_options"));
     EXPECT_FALSE(parameter.contains("enum_labels"));
     EXPECT_FALSE(parameter.contains("enum_source"));
     EXPECT_FALSE(parameter.contains("allow_custom_value"));
@@ -358,7 +358,6 @@ TEST_F(HttpApiTest, GetBlockByIdOmitsUnknownExtendedParameterMetadata) {
     const auto& parameter = body["parameters"][0];
     EXPECT_FALSE(parameter.contains("runtime_mutability"));
     EXPECT_FALSE(parameter.contains("value_kind"));
-    EXPECT_FALSE(parameter.contains("enum_options"));
     EXPECT_FALSE(parameter.contains("enum_labels"));
     EXPECT_FALSE(parameter.contains("enum_source"));
     EXPECT_FALSE(parameter.contains("ui_hint"));

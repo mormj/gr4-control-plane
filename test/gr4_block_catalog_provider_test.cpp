@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <optional>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -159,13 +160,23 @@ TEST(Gr4BlockCatalogProviderTest, BlockDetailsIncludeBuiltinParametersAndExtende
     EXPECT_EQ(ui_constraints->ui_hint, std::optional<std::string>("advanced"));
 
     const auto* amplitude = parameter_by_name("amplitude");
+    const auto* signal_type = parameter_by_name("signal_type");
     ASSERT_NE(amplitude, nullptr);
+    ASSERT_NE(signal_type, nullptr);
     EXPECT_FALSE(amplitude->runtime_mutability.has_value());
     EXPECT_TRUE(amplitude->value_kind == std::optional<std::string>("scalar") || !amplitude->value_kind.has_value());
-    EXPECT_TRUE(amplitude->enum_options.empty());
+    EXPECT_FALSE(amplitude->enum_choices.has_value());
+    EXPECT_FALSE(amplitude->enum_type.has_value());
     EXPECT_TRUE(amplitude->enum_labels.empty());
     EXPECT_FALSE(amplitude->enum_source.has_value());
     EXPECT_FALSE(amplitude->allow_custom_value.has_value());
+
+    EXPECT_EQ(signal_type->type, "string");
+    EXPECT_EQ(signal_type->enum_choices,
+              std::optional<std::vector<std::string>>(
+                  std::vector<std::string>{"Const", "Sin", "Cos", "Square", "Saw", "Triangle", "FastSin", "FastCos", "UniformNoise", "TriangularNoise", "GaussianNoise"}));
+    EXPECT_TRUE(signal_type->enum_type.has_value());
+    EXPECT_FALSE(signal_type->enum_type->empty());
 }
 
 TEST(Gr4BlockCatalogProviderTest, DynamicPortCollectionsExposeCollectionMetadata) {

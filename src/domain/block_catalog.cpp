@@ -14,9 +14,9 @@ bool operator==(const BlockParameterDescriptor& left, const BlockParameterDescri
     return left.name == right.name && left.type == right.type && left.required == right.required &&
            left.default_value == right.default_value && left.summary == right.summary &&
            left.runtime_mutability == right.runtime_mutability && left.value_kind == right.value_kind &&
-           left.enum_options == right.enum_options && left.enum_labels == right.enum_labels &&
-           left.enum_source == right.enum_source && left.ui_hint == right.ui_hint &&
-           left.allow_custom_value == right.allow_custom_value;
+           left.enum_choices == right.enum_choices && left.enum_type == right.enum_type &&
+           left.enum_labels == right.enum_labels && left.enum_source == right.enum_source &&
+           left.ui_hint == right.ui_hint && left.allow_custom_value == right.allow_custom_value;
 }
 
 bool operator==(const BlockDescriptor& left, const BlockDescriptor& right) {

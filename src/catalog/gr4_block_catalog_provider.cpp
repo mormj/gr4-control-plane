@@ -357,6 +357,35 @@ std::optional<gr::property_map> value_to_map(const gr::pmt::Value& value) {
     return result;
 }
 
+std::optional<std::vector<std::string>> value_to_string_list(const gr::pmt::Value& value) {
+    std::optional<std::vector<std::string>> result;
+    gr::pmt::ValueVisitor([&result](const auto& item) {
+        using T = std::decay_t<decltype(item)>;
+        if constexpr (std::same_as<T, gr::Tensor<std::pmr::string>>) {
+            std::vector<std::string> values;
+            values.reserve(item.size());
+            for (const auto& entry : item) {
+                values.emplace_back(entry);
+            }
+            result = std::move(values);
+        } else if constexpr (std::same_as<T, gr::Tensor<gr::pmt::Value>>) {
+            std::vector<std::string> values;
+            values.reserve(item.size());
+            for (const auto& entry : item) {
+                const auto string_value = value_to_string(entry);
+                if (!string_value.has_value()) {
+                    return;
+                }
+                values.push_back(*string_value);
+            }
+            result = std::move(values);
+        } else if constexpr (std::same_as<T, std::string_view>) {
+            result = std::vector<std::string>{std::string(item)};
+        }
+    }).visit(value);
+    return result;
+}
+
 std::string block_name(const gr::BlockModel& block, const std::string& id) {
     const std::string reflected_name(block.name());
     if (!reflected_name.empty() && reflected_name != id && reflected_name.find("::") == std::string::npos) {
@@ -394,6 +423,16 @@ std::optional<std::string> parameter_meta_string(const gr::property_map& meta,
         return std::nullopt;
     }
     return value_to_string(it->second);
+}
+
+std::optional<std::vector<std::string>> parameter_meta_string_list(const gr::property_map& meta,
+                                                                   std::string_view parameter_name,
+                                                                   std::string_view suffix) {
+    const auto it = meta.find(std::string(parameter_name) + std::string(suffix));
+    if (it == meta.end()) {
+        return std::nullopt;
+    }
+    return value_to_string_list(it->second);
 }
 
 std::string parameter_type_name(const gr::pmt::Value& value) {
@@ -470,6 +509,14 @@ std::optional<std::string> parameter_value_kind(const gr::pmt::Value& value) {
         return std::string("scalar");
     }
     return std::nullopt;
+}
+
+std::optional<std::vector<std::string>> parameter_enum_choices(const gr::property_map& meta, std::string_view name) {
+    return parameter_meta_string_list(meta, name, "::enum_values");
+}
+
+std::optional<std::string> parameter_enum_type(const gr::property_map& meta, std::string_view name) {
+    return parameter_meta_string(meta, name, "::enum_type");
 }
 
 std::optional<std::string> parameter_runtime_mutability(std::string_view name) {
@@ -803,6 +850,10 @@ std::vector<domain::BlockParameterDescriptor> to_parameters(gr::BlockModel& bloc
             parameter_summary(meta_information, name));
         descriptor.runtime_mutability = parameter_runtime_mutability(name);
         descriptor.value_kind = parameter_value_kind(value);
+        if (const auto enum_choices = parameter_enum_choices(meta_information, name); enum_choices.has_value()) {
+            descriptor.enum_choices = *enum_choices;
+        }
+        descriptor.enum_type = parameter_enum_type(meta_information, name);
         descriptor.ui_hint = parameter_ui_hint(name);
         descriptors.push_back(std::move(descriptor));
     }
@@ -880,8 +931,11 @@ nlohmann::json to_json(const domain::BlockParameterDescriptor& parameter) {
     if (parameter.value_kind.has_value()) {
         value["value_kind"] = *parameter.value_kind;
     }
-    if (!parameter.enum_options.empty()) {
-        value["enum_options"] = parameter.enum_options;
+    if (parameter.enum_choices.has_value()) {
+        value["enum_choices"] = *parameter.enum_choices;
+    }
+    if (parameter.enum_type.has_value()) {
+        value["enum_type"] = *parameter.enum_type;
     }
     if (!parameter.enum_labels.empty()) {
         value["enum_labels"] = parameter.enum_labels;
@@ -989,8 +1043,11 @@ domain::BlockParameterDescriptor parse_parameter_descriptor(const nlohmann::json
     if (const auto it = value.find("value_kind"); it != value.end() && it->is_string()) {
         parameter.value_kind = it->get<std::string>();
     }
-    if (const auto it = value.find("enum_options"); it != value.end() && it->is_array()) {
-        parameter.enum_options = it->get<std::vector<std::string>>();
+    if (const auto it = value.find("enum_choices"); it != value.end() && it->is_array()) {
+        parameter.enum_choices = it->get<std::vector<std::string>>();
+    }
+    if (const auto it = value.find("enum_type"); it != value.end() && it->is_string()) {
+        parameter.enum_type = it->get<std::string>();
     }
     if (const auto it = value.find("enum_labels"); it != value.end() && it->is_object()) {
         parameter.enum_labels = it->get<std::map<std::string, std::string>>();

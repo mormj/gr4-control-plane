@@ -40,7 +40,8 @@ struct BlockParameterDescriptor {
     std::string summary;
     std::optional<std::string> runtime_mutability;
     std::optional<std::string> value_kind;
-    std::vector<std::string> enum_options;
+    std::optional<std::vector<std::string>> enum_choices;
+    std::optional<std::string> enum_type;
     std::map<std::string, std::string> enum_labels;
     std::optional<std::string> enum_source;
     std::optional<std::string> ui_hint;

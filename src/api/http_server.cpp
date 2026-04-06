@@ -61,8 +61,11 @@ Json block_parameter_to_json(const domain::BlockParameterDescriptor& parameter) 
     if (parameter.value_kind.has_value()) {
         body["value_kind"] = *parameter.value_kind;
     }
-    if (!parameter.enum_options.empty()) {
-        body["enum_options"] = parameter.enum_options;
+    if (parameter.enum_choices.has_value()) {
+        body["enum_choices"] = *parameter.enum_choices;
+    }
+    if (parameter.enum_type.has_value()) {
+        body["enum_type"] = *parameter.enum_type;
     }
     if (!parameter.enum_labels.empty()) {
         body["enum_labels"] = parameter.enum_labels;
