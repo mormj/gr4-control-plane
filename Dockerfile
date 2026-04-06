@@ -91,7 +91,7 @@ COPY --from=gnuradio4-builder /usr/local /usr/local
 
 RUN ldconfig
 
-LABEL org.opencontainers.image.title="gr4-gnuradio4-sdk" \
+LABEL org.opencontainers.image.title="gnuradio4-sdk" \
       org.opencontainers.image.description="GNU Radio 4 base SDK image for building compatible downstream plugins" \
       org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.url="${OCI_URL}" \

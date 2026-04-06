@@ -24,7 +24,7 @@ env:
   BUILD_CONTEXT: .
   DOCKERFILE_PATH: ./Dockerfile
   DOCKER_PLATFORMS: linux/amd64
-  GNURADIO4_BASE_IMAGE_NAME: gr4-gnuradio4-sdk
+  GNURADIO4_BASE_IMAGE_NAME: gnuradio4-sdk
   CONTROL_PLANE_RUNTIME_IMAGE_NAME: gr4-control-plane-runtime
   CONTROL_PLANE_SDK_IMAGE_NAME: gr4-control-plane-sdk
   CONTROL_PLANE_BUILDER_IMAGE_NAME: gr4-control-plane-builder
