@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <format>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -13,11 +14,12 @@ namespace {
 
 using namespace std::chrono_literals;
 
-gr4cp::domain::Session make_session(std::string id, std::string yaml) {
+gr4cp::domain::Session make_session(std::string id, std::string yaml, std::optional<std::string> scheduler_alias = std::nullopt) {
     gr4cp::domain::Session session;
     session.id = std::move(id);
     session.name = session.id;
     session.grc_content = std::move(yaml);
+    session.scheduler_alias = std::move(scheduler_alias);
     session.state = gr4cp::domain::SessionState::Stopped;
     session.created_at = std::chrono::system_clock::now();
     session.updated_at = session.created_at;
@@ -116,6 +118,16 @@ TEST_F(Gr4RuntimeManagerTest, PrepareStartStopAndDestroyManageExecutableGraphLif
     runtime_.stop(session);
     runtime_.destroy(session);
     SUCCEED();
+}
+
+TEST_F(Gr4RuntimeManagerTest, SelectedSchedulerAliasIsAcceptedDuringPrepare) {
+    auto session = make_session("runtime_scheduler_alias", continuous_graph_yaml(), "gr::scheduler::SimpleSingle");
+
+    runtime_.prepare(session);
+    runtime_.start(session);
+    std::this_thread::sleep_for(100ms);
+    runtime_.stop(session);
+    runtime_.destroy(session);
 }
 
 TEST_F(Gr4RuntimeManagerTest, PrepareAfterStopReusesPreparedExecutionForRestart) {

@@ -80,6 +80,18 @@ Json block_parameter_to_json(const domain::BlockParameterDescriptor& parameter) 
     return body;
 }
 
+Json scheduler_to_json(const domain::SchedulerDescriptor& scheduler) {
+    return Json{{"id", scheduler.id}};
+}
+
+Json schedulers_to_json(const std::vector<domain::SchedulerDescriptor>& schedulers) {
+    auto body = Json::array();
+    for (const auto& scheduler : schedulers) {
+        body.push_back(scheduler_to_json(scheduler));
+    }
+    return body;
+}
+
 Json block_to_json(const domain::BlockDescriptor& block) {
     auto inputs = Json::array();
     for (const auto& input : block.inputs) {
@@ -116,7 +128,7 @@ Json blocks_to_json(const std::vector<domain::BlockDescriptor>& blocks) {
 }
 
 Json session_to_json(const domain::Session& session) {
-    return Json{
+    auto body = Json{
         {"id", session.id},
         {"name", session.name},
         {"state", domain::to_string(session.state)},
@@ -124,6 +136,10 @@ Json session_to_json(const domain::Session& session) {
         {"updated_at", domain::format_timestamp_utc(session.updated_at)},
         {"last_error", session.last_error ? Json(*session.last_error) : Json(nullptr)},
     };
+    if (session.scheduler_alias.has_value()) {
+        body["scheduler_id"] = *session.scheduler_alias;
+    }
+    return body;
 }
 
 Json sessions_to_json(const std::vector<domain::Session>& sessions) {
@@ -257,7 +273,8 @@ void execute(httplib::Response& response, Action&& action) {
 void register_routes(httplib::Server& server,
                      app::SessionService& session_service,
                      app::BlockCatalogService& block_catalog_service,
-                     app::BlockSettingsService& block_settings_service) {
+                     app::BlockSettingsService& block_settings_service,
+                     app::SchedulerCatalogService& scheduler_catalog_service) {
     server.Get("/healthz", [](const httplib::Request&, httplib::Response& response) {
         set_json_response(response, Json{{"ok", true}});
     });
@@ -277,10 +294,33 @@ void register_routes(httplib::Server& server,
                    });
                });
 
+    server.Get("/schedulers", [&scheduler_catalog_service](const httplib::Request&, httplib::Response& response) {
+        execute(response, [&]() {
+            set_json_response(response, schedulers_to_json(scheduler_catalog_service.list()));
+        });
+    });
+
+    server.Get(R"(/schedulers/(.+))",
+               [&scheduler_catalog_service](const httplib::Request& request, httplib::Response& response) {
+                   execute(response, [&]() {
+                       set_json_response(response,
+                                         scheduler_to_json(
+                                             scheduler_catalog_service.get(decode_percent_encoded(request.matches[1].str()))));
+                   });
+               });
+
     server.Post("/sessions", [&session_service](const httplib::Request& request, httplib::Response& response) {
         execute(response, [&]() {
             const auto body = parse_json_body(request);
-            const auto session = session_service.create(get_optional_name(body), get_required_grc(body));
+            const auto scheduler_it = body.find("scheduler_id");
+            std::optional<std::string> scheduler_alias;
+            if (scheduler_it != body.end() && !scheduler_it->is_null()) {
+                if (!scheduler_it->is_string()) {
+                    throw app::ValidationError("scheduler_id must be a string");
+                }
+                scheduler_alias = scheduler_it->get<std::string>();
+            }
+            const auto session = session_service.create(get_optional_name(body), get_required_grc(body), std::move(scheduler_alias));
             set_json_response(response, session_to_json(session), 201);
         });
     });

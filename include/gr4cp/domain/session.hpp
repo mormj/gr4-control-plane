@@ -19,6 +19,7 @@ struct Session {
     std::string id;
     std::string name;
     std::string grc_content;
+    std::optional<std::string> scheduler_alias;
     SessionState state{SessionState::Stopped};
     std::optional<std::string> last_error;
     Timestamp created_at;

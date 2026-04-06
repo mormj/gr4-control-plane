@@ -9,6 +9,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -160,6 +161,12 @@ void preload_support_libraries(const std::vector<std::filesystem::path>& plugin_
 #endif
 }
 
+void register_default_schedulers() {
+    auto& registry = gr::globalSchedulerRegistry();
+    (void)registry.insert<gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::singleThreadedBlocking>>("=gr::scheduler::SimpleSingle");
+    (void)registry.insert<gr::scheduler::Simple<gr::scheduler::ExecutionPolicy::multiThreaded>>("=gr::scheduler::SimpleMulti");
+}
+
 std::string module_name_from_library(const std::filesystem::path& path) {
     std::string name = path.filename().string();
     if (name.rfind("lib", 0) == 0) {
@@ -237,6 +244,7 @@ void ensure_runtime_environment(const std::vector<std::filesystem::path>& plugin
             }
             configure_plugin_environment(plugin_directories);
             preload_support_libraries(plugin_directories);
+            register_default_schedulers();
             bootstrap_shared_block_libraries(plugin_directories);
             auto& loader = gr::globalPluginLoader();
             (void)loader.availableBlocks();
@@ -295,14 +303,14 @@ std::string describe_runtime_block(const std::shared_ptr<gr::BlockModel>& block)
     return description;
 }
 
-std::string summarize_runtime_blocks(const gr::Graph& graph) {
-    if (graph.blocks().empty()) {
+std::string summarize_runtime_blocks(const gr::BlockModel& root) {
+    if (root.blocks().empty()) {
         return "<none>";
     }
 
     std::string result;
     bool first = true;
-    for (const auto& block : graph.blocks()) {
+    for (const auto& block : root.blocks()) {
         if (!first) {
             result += ", ";
         }
@@ -312,26 +320,26 @@ std::string summarize_runtime_blocks(const gr::Graph& graph) {
     return result;
 }
 
-BlockNotFoundError make_block_not_found_error(const gr::Graph& graph, std::string_view block_unique_name) {
+BlockNotFoundError make_block_not_found_error(const gr::BlockModel& root, std::string_view block_unique_name) {
     return BlockNotFoundError(std::format("block not found in running session: {}; available runtime blocks: {}",
                                           block_unique_name,
-                                          summarize_runtime_blocks(graph)));
+                                          summarize_runtime_blocks(root)));
 }
 
-std::shared_ptr<gr::BlockModel> resolve_runtime_block(const gr::Graph& graph, std::string_view requested_block_target) {
-    for (const auto& block : graph.blocks()) {
+std::shared_ptr<gr::BlockModel> resolve_runtime_block(const gr::BlockModel& root, std::string_view requested_block_target) {
+    for (const auto& block : root.blocks()) {
         if (block->name() == requested_block_target) {
             return block;
         }
     }
 
-    for (const auto& block : graph.blocks()) {
+    for (const auto& block : root.blocks()) {
         if (block->uniqueName() == requested_block_target) {
             return block;
         }
     }
 
-    for (const auto& block : graph.blocks()) {
+    for (const auto& block : root.blocks()) {
         const auto& settings = block->settings().get();
         if (!settings.contains("name")) {
             continue;
@@ -506,7 +514,7 @@ std::string normalize_graph_content(std::string_view content) {
 }
 
 template <gr::message::Command Command>
-gr::Message send_block_settings_request(gr::scheduler::Simple<>& scheduler,
+gr::Message send_block_settings_request(gr::BlockModel& scheduler_block,
                                         std::string_view block_unique_name,
                                         std::string_view endpoint,
                                         gr::property_map payload,
@@ -514,10 +522,10 @@ gr::Message send_block_settings_request(gr::scheduler::Simple<>& scheduler,
     gr::MsgPortOutBuiltin request_port;
     gr::MsgPortInBuiltin response_port;
 
-    if (auto connection = request_port.connect(scheduler.msgIn); !connection_succeeded(connection)) {
+    if (auto connection = request_port.connect(*scheduler_block.msgIn); !connection_succeeded(connection)) {
         throw std::runtime_error(std::format("failed to connect runtime request port: {}", connection_error_message(connection)));
     }
-    if (auto connection = scheduler.msgOut.connect(response_port); !connection_succeeded(connection)) {
+    if (auto connection = scheduler_block.msgOut->connect(response_port); !connection_succeeded(connection)) {
         throw std::runtime_error(std::format("failed to connect runtime response port: {}", connection_error_message(connection)));
     }
 
@@ -554,12 +562,21 @@ gr::property_map parse_settings_reply(const gr::Message& reply, std::string_view
 }  // namespace
 
 struct Gr4RuntimeManager::Execution {
-    std::unique_ptr<gr::scheduler::Simple<>> scheduler;
-    std::thread worker;
-    std::mutex mutex;
-    std::optional<std::string> async_error;
+    std::shared_ptr<gr::SchedulerModel> scheduler;
     bool running{false};
 };
+
+std::string default_scheduler_alias() {
+    const auto available = gr::globalPluginLoader().availableSchedulers();
+    const auto preferred = std::string("gr::scheduler::SimpleSingle");
+    if (std::ranges::find(available, preferred) != available.end()) {
+        return preferred;
+    }
+    if (!available.empty()) {
+        return available.front();
+    }
+    return preferred;
+}
 
 Gr4RuntimeManager::Gr4RuntimeManager(std::vector<std::filesystem::path> plugin_directories)
     : plugin_directories_(plugin_directories.empty() ? default_plugin_directories() : std::move(plugin_directories)) {}
@@ -606,30 +623,12 @@ void Gr4RuntimeManager::start(const domain::Session& session) {
         return;
     }
 
-    if (execution.worker.joinable()) {
-        execution.worker.join();
+    if (execution.scheduler == nullptr) {
+        throw runtime_error(session, "start", "scheduler is unavailable");
     }
 
-    execution.async_error.reset();
+    execution.scheduler->start();
     execution.running = true;
-    execution.worker = std::thread([&execution]() {
-        try {
-            const auto result = execution.scheduler->runAndWait();
-            if (!result.has_value()) {
-                std::lock_guard execution_lock(execution.mutex);
-                execution.async_error = std::format("scheduler execution failed: {}", result.error());
-            }
-        } catch (const std::exception& error) {
-            std::lock_guard execution_lock(execution.mutex);
-            execution.async_error = std::string(error.what());
-        } catch (...) {
-            std::lock_guard execution_lock(execution.mutex);
-            execution.async_error = "unknown scheduler execution failure";
-        }
-
-        std::lock_guard execution_lock(execution.mutex);
-        execution.running = false;
-    });
 }
 
 void Gr4RuntimeManager::stop(const domain::Session& session) {
@@ -656,9 +655,14 @@ void Gr4RuntimeManager::set_block_settings(const domain::Session& session,
         throw runtime_error(session, "settings update", "session runtime is not running");
     }
 
-    const auto resolved_block = resolve_runtime_block(execution->scheduler->graph(), block_target);
+    auto* scheduler_block = execution->scheduler->asBlockModel();
+    if (scheduler_block == nullptr) {
+        throw runtime_error(session, "settings update", "scheduler block is unavailable");
+    }
+
+    const auto resolved_block = resolve_runtime_block(*scheduler_block, block_target);
     if (!resolved_block) {
-        throw make_block_not_found_error(execution->scheduler->graph(), block_target);
+        throw make_block_not_found_error(*scheduler_block, block_target);
     }
     const auto runtime_block_id = std::string(resolved_block->uniqueName());
 
@@ -666,7 +670,7 @@ void Gr4RuntimeManager::set_block_settings(const domain::Session& session,
                                                              : gr::block::property::kSetting;
     try {
         const auto reply = send_block_settings_request<gr::message::Command::Set>(
-            *execution->scheduler,
+            *scheduler_block,
             runtime_block_id,
             endpoint,
             patch,
@@ -688,15 +692,20 @@ gr::property_map Gr4RuntimeManager::get_block_settings(const domain::Session& se
         throw runtime_error(session, "settings read", "session runtime is not running");
     }
 
-    const auto resolved_block = resolve_runtime_block(execution->scheduler->graph(), block_target);
+    auto* scheduler_block = execution->scheduler->asBlockModel();
+    if (scheduler_block == nullptr) {
+        throw runtime_error(session, "settings read", "scheduler block is unavailable");
+    }
+
+    const auto resolved_block = resolve_runtime_block(*scheduler_block, block_target);
     if (!resolved_block) {
-        throw make_block_not_found_error(execution->scheduler->graph(), block_target);
+        throw make_block_not_found_error(*scheduler_block, block_target);
     }
     const auto runtime_block_id = std::string(resolved_block->uniqueName());
 
     try {
         const auto reply = send_block_settings_request<gr::message::Command::Get>(
-            *execution->scheduler,
+            *scheduler_block,
             runtime_block_id,
             gr::block::property::kSetting,
             {},
@@ -721,11 +730,13 @@ Gr4RuntimeManager::Execution& Gr4RuntimeManager::prepare_locked(const domain::Se
     auto execution = std::make_unique<Execution>();
     try {
         auto graph = gr::loadGrc(gr::globalPluginLoader(), normalize_graph_content(session.grc_content));
-        execution->scheduler = std::make_unique<gr::scheduler::Simple<>>();
-        const auto exchanged = execution->scheduler->exchange(std::move(graph));
-        if (!exchanged.has_value()) {
-            throw runtime_error(session, "prepare", std::format("failed to initialize scheduler: {}", exchanged.error()));
+        const auto scheduler_alias = session.scheduler_alias.value_or(default_scheduler_alias());
+        auto scheduler = gr::globalPluginLoader().instantiateScheduler(scheduler_alias);
+        if (!scheduler) {
+            throw runtime_error(session, "prepare", std::format("failed to initialize scheduler: {}", scheduler_alias));
         }
+        scheduler->setGraph(std::move(*graph));
+        execution->scheduler = std::move(scheduler);
     } catch (const std::exception& error) {
         throw runtime_error(session, "prepare", error.what());
     }
@@ -741,21 +752,16 @@ Gr4RuntimeManager::Execution* Gr4RuntimeManager::find_execution_locked(const std
 
 void Gr4RuntimeManager::stop_locked(const domain::Session& session, Execution& execution) {
     if (execution.running) {
-        const auto result = execution.scheduler->changeStateTo(gr::lifecycle::State::REQUESTED_STOP);
-        if (!result.has_value()) {
-            throw runtime_error(session, "stop", std::format("failed to stop scheduler: {}", result.error()));
+        if (execution.scheduler == nullptr) {
+            throw runtime_error(session, "stop", "scheduler is unavailable");
+        }
+        try {
+            execution.scheduler->stop();
+        } catch (const std::exception& error) {
+            throw runtime_error(session, "stop", error.what());
         }
     }
-
-    if (execution.worker.joinable()) {
-        execution.worker.join();
-    }
-
-    std::lock_guard execution_lock(execution.mutex);
     execution.running = false;
-    if (execution.async_error.has_value()) {
-        throw runtime_error(session, "execution", *execution.async_error);
-    }
 }
 
 void Gr4RuntimeManager::destroy_locked(const domain::Session& session) {

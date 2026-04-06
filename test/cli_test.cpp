@@ -14,8 +14,10 @@
 #include "gr4cp/api/http_server.hpp"
 #include "gr4cp/app/block_catalog_service.hpp"
 #include "gr4cp/app/block_settings_service.hpp"
+#include "gr4cp/app/scheduler_catalog_service.hpp"
 #include "gr4cp/app/session_service.hpp"
 #include "gr4cp/catalog/block_catalog_provider.hpp"
+#include "gr4cp/catalog/scheduler_catalog_provider.hpp"
 #include "gr4cp/runtime/stub_runtime_manager.hpp"
 #include "gr4cp/storage/in_memory_session_repository.hpp"
 
@@ -28,6 +30,11 @@ namespace {
 class EmptyBlockCatalogProvider final : public gr4cp::catalog::BlockCatalogProvider {
 public:
     std::vector<gr4cp::domain::BlockDescriptor> list() const override { return {}; }
+};
+
+class EmptySchedulerCatalogProvider final : public gr4cp::catalog::SchedulerCatalogProvider {
+public:
+    std::vector<gr4cp::domain::SchedulerDescriptor> list() const override { return {}; }
 };
 
 class CliTest : public ::testing::Test {
@@ -44,7 +51,7 @@ protected:
     }
 
     void SetUp() override {
-        gr4cp::api::register_routes(server, service, block_catalog_service, block_settings_service);
+        gr4cp::api::register_routes(server, service, block_catalog_service, block_settings_service, scheduler_catalog_service);
         port = server.bind_to_any_port("127.0.0.1");
         ASSERT_GT(port, 0);
         server_thread = std::jthread([this]() { server.listen_after_bind(); });
@@ -105,9 +112,11 @@ protected:
     gr4cp::storage::InMemorySessionRepository repository;
     gr4cp::runtime::StubRuntimeManager runtime_manager;
     EmptyBlockCatalogProvider block_catalog_provider;
+    EmptySchedulerCatalogProvider scheduler_catalog_provider;
     gr4cp::app::SessionService service{repository, runtime_manager};
     gr4cp::app::BlockSettingsService block_settings_service{repository, runtime_manager};
     gr4cp::app::BlockCatalogService block_catalog_service{block_catalog_provider};
+    gr4cp::app::SchedulerCatalogService scheduler_catalog_service{scheduler_catalog_provider};
     int port{};
     std::string url;
     std::jthread server_thread;

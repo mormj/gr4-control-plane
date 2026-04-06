@@ -89,9 +89,11 @@ endif()
 add_library(gr4cp_core
     src/app/block_settings_service.cpp
     src/app/block_catalog_service.cpp
+    src/app/scheduler_catalog_service.cpp
     src/api/http_server.cpp
     src/catalog/static_block_catalog_provider.cpp
     src/domain/block_catalog.cpp
+    src/domain/scheduler_catalog.cpp
     src/domain/session.cpp
     src/app/session_service.cpp
     src/runtime/gr4_runtime_manager.cpp
@@ -103,6 +105,7 @@ if(GR4CP_HAVE_GNURADIO4)
     target_sources(gr4cp_core
         PRIVATE
             src/catalog/gr4_block_catalog_provider.cpp
+            src/catalog/gr4_scheduler_catalog_provider.cpp
     )
     target_compile_definitions(gr4cp_core
         PUBLIC
@@ -214,6 +217,7 @@ add_executable(gr4cp_core_test
     test/block_settings_service_test.cpp
     test/session_service_test.cpp
     test/block_catalog_service_test.cpp
+    test/scheduler_catalog_service_test.cpp
     test/gr4_block_catalog_provider_test.cpp
     test/gr4_runtime_manager_test.cpp
 )

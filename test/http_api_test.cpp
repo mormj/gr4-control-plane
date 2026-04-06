@@ -13,8 +13,10 @@
 
 #include "gr4cp/app/block_catalog_service.hpp"
 #include "gr4cp/app/block_settings_service.hpp"
+#include "gr4cp/app/scheduler_catalog_service.hpp"
 #include "gr4cp/app/session_service.hpp"
 #include "gr4cp/catalog/block_catalog_provider.hpp"
+#include "gr4cp/catalog/scheduler_catalog_provider.hpp"
 #include "gr4cp/runtime/runtime_manager.hpp"
 #include "gr4cp/storage/in_memory_session_repository.hpp"
 
@@ -108,6 +110,16 @@ public:
     }
 };
 
+class TestSchedulerCatalogProvider final : public gr4cp::catalog::SchedulerCatalogProvider {
+public:
+    std::vector<gr4cp::domain::SchedulerDescriptor> list() const override {
+        return {
+            {"gr::scheduler::SimpleMulti"},
+            {"gr::scheduler::SimpleSingle"},
+        };
+    }
+};
+
 class HttpApiTest : public ::testing::Test {
 protected:
     class FakeRuntimeManager final : public gr4cp::runtime::RuntimeManager {
@@ -184,7 +196,7 @@ protected:
     }
 
     void SetUp() override {
-        gr4cp::api::register_routes(server, service, block_catalog_service, block_settings_service);
+        gr4cp::api::register_routes(server, service, block_catalog_service, block_settings_service, scheduler_catalog_service);
         port = server.bind_to_any_port("127.0.0.1");
         ASSERT_GT(port, 0);
         server_thread = std::jthread([this]() { server.listen_after_bind(); });
@@ -227,9 +239,11 @@ protected:
     gr4cp::storage::InMemorySessionRepository repository;
     FakeRuntimeManager runtime_manager;
     TestBlockCatalogProvider block_catalog_provider;
+    TestSchedulerCatalogProvider scheduler_catalog_provider;
     gr4cp::app::SessionService service{repository, runtime_manager};
     gr4cp::app::BlockSettingsService block_settings_service{repository, runtime_manager};
     gr4cp::app::BlockCatalogService block_catalog_service{block_catalog_provider};
+    gr4cp::app::SchedulerCatalogService scheduler_catalog_service{scheduler_catalog_provider};
     int port{};
     std::jthread server_thread;
     std::unique_ptr<httplib::Client> client;
@@ -252,6 +266,18 @@ TEST_F(HttpApiTest, PostSessionsSuccess) {
     EXPECT_FALSE(body.contains("grc_content"));
 }
 
+TEST_F(HttpApiTest, PostSessionsIncludesSelectedSchedulerWhenProvided) {
+    const auto response = client->Post("/sessions",
+                                       R"({"name":"demo","grc":"flowgraph","scheduler_id":"gr::scheduler::SimpleSingle"})",
+                                       "application/json");
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 201);
+
+    const auto body = parse_json(response);
+    EXPECT_EQ(body["scheduler_id"], "gr::scheduler::SimpleSingle");
+}
+
 TEST_F(HttpApiTest, GetBlocksSuccess) {
     const auto response = client->Get("/blocks");
 
@@ -266,6 +292,30 @@ TEST_F(HttpApiTest, GetBlocksSuccess) {
     EXPECT_TRUE(body[0]["inputs"].is_array());
     EXPECT_TRUE(body[0]["outputs"].is_array());
     EXPECT_TRUE(body[0]["parameters"].is_array());
+}
+
+TEST_F(HttpApiTest, GetSchedulersSuccess) {
+    const auto response = client->Get("/schedulers");
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 200);
+    expect_json_content_type(response);
+
+    const auto body = parse_json(response);
+    ASSERT_EQ(body.size(), 2U);
+    EXPECT_EQ(body[0]["id"], "gr::scheduler::SimpleMulti");
+    EXPECT_EQ(body[1]["id"], "gr::scheduler::SimpleSingle");
+}
+
+TEST_F(HttpApiTest, GetSchedulerByIdSuccess) {
+    const auto response = client->Get(("/schedulers/" + url_encode("gr::scheduler::SimpleSingle")).c_str());
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 200);
+    expect_json_content_type(response);
+
+    const auto body = parse_json(response);
+    EXPECT_EQ(body["id"], "gr::scheduler::SimpleSingle");
 }
 
 TEST_F(HttpApiTest, GetBlocksUsesDeterministicOrdering) {

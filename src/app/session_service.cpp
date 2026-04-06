@@ -38,7 +38,7 @@ SessionService::SessionService(storage::SessionRepository& repository,
                                runtime::RuntimeManager& runtime_manager)
     : repository_(repository), runtime_manager_(runtime_manager) {}
 
-domain::Session SessionService::create(const std::string& name, const std::string& grc) {
+domain::Session SessionService::create(const std::string& name, const std::string& grc, std::optional<std::string> scheduler_alias) {
     std::lock_guard lock(mutex_);
 
     if (grc.empty()) {
@@ -48,6 +48,7 @@ domain::Session SessionService::create(const std::string& name, const std::strin
     auto session = domain::Session{};
     session.name = name;
     session.grc_content = grc;
+    session.scheduler_alias = std::move(scheduler_alias);
     session.state = domain::SessionState::Stopped;
 
     do {

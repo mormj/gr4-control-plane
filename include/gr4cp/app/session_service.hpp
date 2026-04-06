@@ -35,7 +35,7 @@ class SessionService {
 public:
     SessionService(storage::SessionRepository& repository, runtime::RuntimeManager& runtime_manager);
 
-    domain::Session create(const std::string& name, const std::string& grc);
+    domain::Session create(const std::string& name, const std::string& grc, std::optional<std::string> scheduler_alias = std::nullopt);
     std::vector<domain::Session> list();
     domain::Session get(const std::string& id);
     domain::Session start(const std::string& id);

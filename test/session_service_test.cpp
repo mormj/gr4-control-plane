@@ -91,6 +91,7 @@ TEST_F(SessionServiceTest, CreateSessionSuccess) {
     EXPECT_TRUE(session.id.starts_with("sess_"));
     EXPECT_EQ(session.name, "demo");
     EXPECT_EQ(session.grc_content, "graph");
+    EXPECT_FALSE(session.scheduler_alias.has_value());
     EXPECT_EQ(session.state, gr4cp::domain::SessionState::Stopped);
     EXPECT_FALSE(session.last_error.has_value());
     EXPECT_EQ(session.created_at, session.updated_at);
@@ -98,6 +99,18 @@ TEST_F(SessionServiceTest, CreateSessionSuccess) {
     const auto stored = repository.get(session.id);
     ASSERT_TRUE(stored.has_value());
     EXPECT_EQ(stored->name, "demo");
+}
+
+TEST_F(SessionServiceTest, CreateSessionStoresSelectedSchedulerAlias) {
+    const auto session = service.create("demo", "graph", std::string("gr::scheduler::SimpleSingle"));
+
+    ASSERT_TRUE(session.scheduler_alias.has_value());
+    EXPECT_EQ(*session.scheduler_alias, "gr::scheduler::SimpleSingle");
+
+    const auto stored = repository.get(session.id);
+    ASSERT_TRUE(stored.has_value());
+    ASSERT_TRUE(stored->scheduler_alias.has_value());
+    EXPECT_EQ(*stored->scheduler_alias, "gr::scheduler::SimpleSingle");
 }
 
 TEST_F(SessionServiceTest, CreateSessionWithEmptyGrcFails) {
