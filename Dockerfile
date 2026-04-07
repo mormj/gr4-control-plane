@@ -30,8 +30,17 @@ RUN apt-get update -q && apt-get install --no-install-recommends -qy \
 RUN apt-get update -q && apt-get install --no-install-recommends -qy \
     gcc-15 \
     g++-15 \
+    clang-20 \
+    libc++-20-dev \
+    libc++abi-20-dev \
+    libunwind-20-dev \
     libstdc++-15-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-15 110 \
+      --slave /usr/bin/g++ g++ /usr/bin/g++-15 \
+      --slave /usr/bin/gcov gcov /usr/bin/gcov-15 \
+    && update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-20 110
 
 RUN apt-get update -q && apt-get install --no-install-recommends -qy \
     cppzmq-dev \
@@ -41,6 +50,7 @@ RUN apt-get update -q && apt-get install --no-install-recommends -qy \
     libfftw3-dev \
     libgtest-dev \
     libssl-dev \
+    libtbb-dev \
     nlohmann-json3-dev \
     python3 \
     python3-dev \
@@ -66,8 +76,8 @@ WORKDIR /opt/gnuradio4
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithAssert \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_C_COMPILER=gcc-15 \
-      -DCMAKE_CXX_COMPILER=g++-15 \
+      -DCMAKE_C_COMPILER=clang-20 \
+      -DCMAKE_CXX_COMPILER=clang++-20 \
       -DGR_ENABLE_BLOCK_REGISTRY=ON \
       -DWARNINGS_AS_ERRORS=ON \
       -DTIMETRACE=OFF \
@@ -96,8 +106,8 @@ RUN git clone --depth 1 --branch "${GR4_INCUBATOR_REF}" "${GR4_INCUBATOR_REPO}" 
     cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
-      -DCMAKE_C_COMPILER=gcc-15 \
-      -DCMAKE_CXX_COMPILER=g++-15 \
+      -DCMAKE_C_COMPILER=clang-20 \
+      -DCMAKE_CXX_COMPILER=clang++-20 \
       -DENABLE_TESTING=OFF \
       -DENABLE_EXAMPLES=OFF \
       -DENABLE_GUI_EXAMPLES=OFF \
@@ -116,8 +126,8 @@ LABEL org.opencontainers.image.title="gnuradio4-sdk" \
 
 ENV GR4CP_GNURADIO4_PREFIX=/usr/local \
     GNURADIO4_PLUGIN_DIRECTORIES=/usr/local/lib \
-    CC=gcc-15 \
-    CXX=g++-15
+    CC=clang-20 \
+    CXX=clang++-20
 
 FROM ${GNURADIO4_SDK_IMAGE} AS toolchain
 
@@ -136,8 +146,8 @@ COPY . .
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="${GR4CP_INSTALL_PREFIX}" \
-      -DCMAKE_C_COMPILER=gcc-15 \
-      -DCMAKE_CXX_COMPILER=g++-15 \
+      -DCMAKE_C_COMPILER=clang-20 \
+      -DCMAKE_CXX_COMPILER=clang++-20 \
       -DGR4CP_GNURADIO4_PREFIX=/usr/local \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
@@ -160,8 +170,8 @@ LABEL org.opencontainers.image.title="gr4-control-plane-sdk" \
 
 ENV PATH="/opt/gr4-control-plane/bin:${PATH}" \
     GNURADIO4_PLUGIN_DIRECTORIES="/usr/local/lib:/opt/gr4-control-plane/lib" \
-    CC=gcc-15 \
-    CXX=g++-15
+    CC=clang-20 \
+    CXX=clang++-20
 
 WORKDIR /workspace
 CMD ["/bin/bash"]
