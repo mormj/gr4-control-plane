@@ -73,11 +73,14 @@ RUN git clone --depth 1 --branch "${GNURADIO4_REF}" "${GNURADIO4_REPO}" /opt/gnu
 
 WORKDIR /opt/gnuradio4
 
-RUN cmake -S . -B build -G Ninja \
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithAssert \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
       -DCMAKE_C_COMPILER=clang-20 \
       -DCMAKE_CXX_COMPILER=clang++-20 \
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       -DGR_ENABLE_BLOCK_REGISTRY=ON \
       -DWARNINGS_AS_ERRORS=ON \
       -DTIMETRACE=OFF \
@@ -101,13 +104,16 @@ ARG OCI_VERSION
 ARG GR4_INCUBATOR_REPO=https://github.com/gnuradio/gr4-incubator.git
 ARG GR4_INCUBATOR_REF=main
 
-RUN git clone --depth 1 --branch "${GR4_INCUBATOR_REF}" "${GR4_INCUBATOR_REPO}" /opt/gr4-incubator && \
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    git clone --depth 1 --branch "${GR4_INCUBATOR_REF}" "${GR4_INCUBATOR_REPO}" /opt/gr4-incubator && \
     cd /opt/gr4-incubator && \
     cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
       -DCMAKE_C_COMPILER=clang-20 \
       -DCMAKE_CXX_COMPILER=clang++-20 \
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       -DENABLE_TESTING=OFF \
       -DENABLE_EXAMPLES=OFF \
       -DENABLE_GUI_EXAMPLES=OFF \
@@ -143,11 +149,14 @@ ARG GR4CP_INSTALL_PREFIX=/opt/gr4-control-plane
 WORKDIR /workspaces/gr4-control-plane
 COPY . .
 
-RUN cmake -S . -B build -G Ninja \
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="${GR4CP_INSTALL_PREFIX}" \
       -DCMAKE_C_COMPILER=clang-20 \
       -DCMAKE_CXX_COMPILER=clang++-20 \
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       -DGR4CP_GNURADIO4_PREFIX=/usr/local \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build

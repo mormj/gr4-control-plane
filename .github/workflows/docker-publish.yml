@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_multiarch:
+        description: 'Publish multi-arch images (amd64 + arm64)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,8 +28,9 @@ permissions:
 env:
   BUILD_CONTEXT: .
   DOCKERFILE_PATH: ./Dockerfile
-  TEST_PLATFORMS: linux/amd64
-  PUBLISH_PLATFORMS: linux/amd64,linux/arm64
+  TEST_PLATFORM: linux/amd64
+  PUBLISH_PLATFORM_AMD64: linux/amd64
+  PUBLISH_PLATFORM_ARM64: linux/arm64
   GNURADIO4_BASE_IMAGE_NAME: gnuradio4-sdk
   CONTROL_PLANE_RUNTIME_IMAGE_NAME: gr4-control-plane-runtime
   CONTROL_PLANE_SDK_IMAGE_NAME: gr4-control-plane-sdk
@@ -34,10 +40,10 @@ env:
   GR_SPLIT_BLOCK_INSTANTIATIONS: OFF
 
 jobs:
-  gnuradio4-base:
-    name: Build GNU Radio 4 base SDK
+  gnuradio4-base-amd64:
+    name: Build GNU Radio 4 base SDK (amd64)
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    timeout-minutes: 240
     if: github.event_name == 'workflow_dispatch' && inputs.publish_gnuradio4_base == true
 
     steps:
@@ -73,9 +79,9 @@ jobs:
           context: ${{ env.BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE_PATH }}
           target: gnuradio4-sdk
-          platforms: ${{ env.PUBLISH_PLATFORMS }}
+          platforms: ${{ env.PUBLISH_PLATFORM_AMD64 }}
           push: true
-          tags: ${{ steps.build-settings.outputs.base_image }}:latest
+          tags: ${{ steps.build-settings.outputs.base_image }}:amd64
           build-args: |
             GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
             GNURADIO4_REF=${{ steps.build-settings.outputs.gnuradio4_ref }}
@@ -84,8 +90,97 @@ jobs:
             OCI_URL=https://github.com/gnuradio/gnuradio4
             OCI_REVISION=${{ steps.build-settings.outputs.gnuradio4_ref }}
             OCI_VERSION=${{ steps.build-settings.outputs.gnuradio4_ref }}
-          cache-from: type=gha,scope=gr4-gnuradio4-sdk
-          cache-to: type=gha,scope=gr4-gnuradio4-sdk,mode=max
+          cache-from: type=gha,scope=gr4-gnuradio4-sdk-amd64
+          cache-to: type=gha,scope=gr4-gnuradio4-sdk-amd64,mode=max
+
+  gnuradio4-base-arm64:
+    name: Build GNU Radio 4 base SDK (arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_gnuradio4_base == true && inputs.publish_multiarch == true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve base image settings
+        id: build-settings
+        shell: bash
+        run: |
+          owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          base_image="ghcr.io/${owner}/${GNURADIO4_BASE_IMAGE_NAME}"
+          {
+            echo "base_image=${base_image}"
+            echo "gnuradio4_ref=${{ github.event_name == 'workflow_dispatch' && inputs.gnuradio4_ref || env.GNURADIO4_REF }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish GNU Radio 4 base SDK image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          target: gnuradio4-sdk
+          platforms: ${{ env.PUBLISH_PLATFORM_ARM64 }}
+          push: true
+          tags: ${{ steps.build-settings.outputs.base_image }}:arm64
+          build-args: |
+            GNURADIO4_REPO=${{ env.GNURADIO4_REPO }}
+            GNURADIO4_REF=${{ steps.build-settings.outputs.gnuradio4_ref }}
+            GR_SPLIT_BLOCK_INSTANTIATIONS=${{ env.GR_SPLIT_BLOCK_INSTANTIATIONS }}
+            OCI_SOURCE=https://github.com/gnuradio/gnuradio4
+            OCI_URL=https://github.com/gnuradio/gnuradio4
+            OCI_REVISION=${{ steps.build-settings.outputs.gnuradio4_ref }}
+            OCI_VERSION=${{ steps.build-settings.outputs.gnuradio4_ref }}
+          cache-from: type=gha,scope=gr4-gnuradio4-sdk-arm64
+          cache-to: type=gha,scope=gr4-gnuradio4-sdk-arm64,mode=max
+
+  gnuradio4-base-manifest:
+    name: Publish GNU Radio 4 base SDK manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - gnuradio4-base-amd64
+      - gnuradio4-base-arm64
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_gnuradio4_base == true && inputs.publish_multiarch == true
+
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve base image settings
+        id: build-settings
+        shell: bash
+        run: |
+          owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          base_image="ghcr.io/${owner}/${GNURADIO4_BASE_IMAGE_NAME}"
+          echo "base_image=${base_image}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch GNU Radio 4 base SDK manifest
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ steps.build-settings.outputs.base_image }}:latest" \
+            "${{ steps.build-settings.outputs.base_image }}:amd64" \
+            "${{ steps.build-settings.outputs.base_image }}:arm64"
 
   control-plane:
     name: Build, test, and publish control-plane images
@@ -112,19 +207,16 @@ jobs:
           sdk_image="ghcr.io/${owner}/${CONTROL_PLANE_SDK_IMAGE_NAME}"
           builder_image="ghcr.io/${owner}/${CONTROL_PLANE_BUILDER_IMAGE_NAME}"
           push_images="false"
-          build_platforms="${TEST_PLATFORMS}"
           if [[ '${{ github.event_name }}' == 'push' ]]; then
             push_images="true"
-            build_platforms="${PUBLISH_PLATFORMS}"
           fi
           {
             echo "base_image=${base_image}"
             echo "runtime_image=${runtime_image}"
             echo "sdk_image=${sdk_image}"
             echo "builder_image=${builder_image}"
-            echo "gnuradio4_sdk_image_ref=${base_image}:latest"
+            echo "gnuradio4_sdk_image_ref=${base_image}:amd64"
             echo "push_images=${push_images}"
-            echo "build_platforms=${build_platforms}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -142,7 +234,7 @@ jobs:
           context: ${{ env.BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE_PATH }}
           target: builder
-          platforms: ${{ steps.build-settings.outputs.build_platforms }}
+          platforms: ${{ env.TEST_PLATFORM }}
           load: true
           push: false
           tags: ${{ steps.build-settings.outputs.builder_image }}:ci
@@ -170,7 +262,7 @@ jobs:
           context: ${{ env.BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE_PATH }}
           target: sdk
-          platforms: ${{ steps.build-settings.outputs.build_platforms }}
+          platforms: ${{ env.TEST_PLATFORM }}
           load: ${{ steps.build-settings.outputs.push_images != 'true' }}
           push: ${{ steps.build-settings.outputs.push_images == 'true' }}
           tags: ${{ steps.build-settings.outputs.sdk_image }}:latest
@@ -190,7 +282,7 @@ jobs:
           context: ${{ env.BUILD_CONTEXT }}
           file: ${{ env.DOCKERFILE_PATH }}
           target: runtime
-          platforms: ${{ steps.build-settings.outputs.build_platforms }}
+          platforms: ${{ env.TEST_PLATFORM }}
           push: true
           tags: ${{ steps.build-settings.outputs.runtime_image }}:latest
           build-args: |
