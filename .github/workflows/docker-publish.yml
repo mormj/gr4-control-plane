@@ -96,7 +96,7 @@ jobs:
   gnuradio4-base-arm64:
     name: Build GNU Radio 4 base SDK (arm64)
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 720
     if: github.event_name == 'workflow_dispatch' && inputs.publish_gnuradio4_base == true && inputs.publish_multiarch == true
 
     steps:
